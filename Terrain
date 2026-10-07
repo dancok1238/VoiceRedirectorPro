@@ -1,0 +1,1173 @@
+--[[
+========================================================================
+  _  __      _                  ______           
+ | |/ /     (_)                |  ____|          
+ | ' /  __ _ _ _______   ___   | |__   _ ____   __
+ |  <  / _` | |_  / _ \ / _ \  |  __| | '_ \ \ / /
+ | . \| (_| | |/ / (_) | (_) | | |____| | | \ V / 
+ |_|\_\__,_|_/___\___/ \___/  |______|_| |_|\_/  
+                                                 
+ [*] Protocol    : Kaizoo Environment API
+ [*] Operation   : Deobfuscation & Optimization
+========================================================================
+]]--
+
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local Workspace        = game:GetService("Workspace")
+
+local player  = Players.LocalPlayer
+local mouse   = player:GetMouse()
+local camera  = Workspace.CurrentCamera
+local terrain = Workspace.Terrain
+
+local brushActive  = false
+local brushSize    = 16
+local selMat       = Enum.Material.Grass
+local isPainting   = false
+local touchPos     = nil
+local brushType    = "FillBlock"
+local toolMode     = "Paint"
+local brushOpacity = 1.0
+local heightMode   = false
+local heightLimit  = 0
+
+local useCustomColor = false
+local customColor    = Color3.fromRGB(255, 255, 255)
+local draggingSlider = nil  -- "R"|"G"|"B"|nil
+
+local history        = {}
+local redoStack      = {}
+local MAX_HISTORY    = 50
+local paintedRegions = {}
+local VS             = 4
+
+local function mround(n)
+	return math.floor(n + 0.5)
+end
+
+local MATERIALS = {
+	{name="Grass",        mat=Enum.Material.Grass,        col=Color3.fromRGB(106,127,63)},
+	{name="LeafyGrass",   mat=Enum.Material.LeafyGrass,   col=Color3.fromRGB(90,150,60)},
+	{name="Ground",       mat=Enum.Material.Ground,        col=Color3.fromRGB(110,85,55)},
+	{name="Mud",          mat=Enum.Material.Mud,           col=Color3.fromRGB(90,65,40)},
+	{name="Sand",         mat=Enum.Material.Sand,          col=Color3.fromRGB(210,190,130)},
+	{name="Salt",         mat=Enum.Material.Salt,          col=Color3.fromRGB(230,230,220)},
+	{name="Snow",         mat=Enum.Material.Snow,          col=Color3.fromRGB(220,235,255)},
+	{name="Ice",          mat=Enum.Material.Ice,           col=Color3.fromRGB(160,210,240)},
+	{name="Water",        mat=Enum.Material.Water,         col=Color3.fromRGB(40,100,180)},
+	{name="Rock",         mat=Enum.Material.Rock,          col=Color3.fromRGB(110,105,100)},
+	{name="Slate",        mat=Enum.Material.Slate,         col=Color3.fromRGB(90,95,100)},
+	{name="Sandstone",    mat=Enum.Material.Sandstone,     col=Color3.fromRGB(190,150,100)},
+	{name="Limestone",    mat=Enum.Material.Limestone,     col=Color3.fromRGB(200,190,165)},
+	{name="Basalt",       mat=Enum.Material.Basalt,        col=Color3.fromRGB(55,55,60)},
+	{name="CrackedLava",  mat=Enum.Material.CrackedLava,   col=Color3.fromRGB(180,60,20)},
+	{name="Asphalt",      mat=Enum.Material.Asphalt,       col=Color3.fromRGB(60,60,65)},
+	{name="Cobblestone",  mat=Enum.Material.Cobblestone,   col=Color3.fromRGB(120,115,105)},
+	{name="Pavement",     mat=Enum.Material.Pavement,      col=Color3.fromRGB(150,148,142)},
+	{name="Brick",        mat=Enum.Material.Brick,         col=Color3.fromRGB(170,80,55)},
+	{name="Wood",         mat=Enum.Material.Wood,          col=Color3.fromRGB(140,100,60)},
+	{name="WoodPlanks",   mat=Enum.Material.WoodPlanks,    col=Color3.fromRGB(160,115,65)},
+	{name="SmoothPlastic",mat=Enum.Material.SmoothPlastic, col=Color3.fromRGB(180,180,185)},
+}
+
+local C = {
+	bg      = Color3.fromRGB(12, 12, 12),
+	surface = Color3.fromRGB(22, 22, 22),
+	card    = Color3.fromRGB(32, 32, 32),
+	border  = Color3.fromRGB(58, 58, 58),
+	mid     = Color3.fromRGB(50, 50, 50),
+	dimtext = Color3.fromRGB(110, 110, 110),
+	text    = Color3.fromRGB(210, 210, 210),
+	white   = Color3.fromRGB(255, 255, 255),
+	black   = Color3.fromRGB(0, 0, 0),
+	green   = Color3.fromRGB(70, 200, 100),
+	red     = Color3.fromRGB(220, 70, 70),
+}
+local F = Enum.Font.FredokaOne
+
+local function corner(r, parent)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r)
+	c.Parent = parent
+end
+
+local function stroke(col, thick, parent)
+	local s = Instance.new("UIStroke")
+	s.Color = col
+	s.Thickness = thick
+	s.Parent = parent
+end
+
+local function Label(p)
+	local l = Instance.new("TextLabel")
+	l.Text              = p.text or ""
+	l.Parent            = p.parent
+	l.Position          = p.pos or UDim2.new(0,0,0,0)
+	l.Size              = p.size or UDim2.new(1,0,1,0)
+	l.BackgroundTransparency = 1
+	l.TextColor3        = p.color or C.text
+	l.TextSize          = p.textSize or 13
+	l.Font              = F
+	l.TextXAlignment    = p.xAlign or Enum.TextXAlignment.Left
+	l.TextYAlignment    = Enum.TextYAlignment.Center
+	l.TextTruncate      = Enum.TextTruncate.AtEnd
+	l.ClipsDescendants  = true
+	if p.zIndex then l.ZIndex = p.zIndex end
+	return l
+end
+
+local function Btn(p)
+	local b = Instance.new("TextButton")
+	b.Text             = p.text or ""
+	b.Parent           = p.parent
+	b.Position         = p.pos or UDim2.new(0,0,0,0)
+	b.Size             = p.size or UDim2.new(1,0,0,28)
+	b.BackgroundColor3 = p.bg or C.card
+	b.TextColor3       = p.fg or C.text
+	b.TextSize         = p.textSize or 13
+	b.Font             = F
+	b.BorderSizePixel  = 0
+	b.AutoButtonColor  = false
+	b.ClipsDescendants = true
+	if p.zIndex then b.ZIndex = p.zIndex end
+	corner(6, b)
+	return b
+end
+
+local function togglePair(a, b)
+	local function selA()
+		a.BackgroundColor3 = C.white ; a.TextColor3 = C.black
+		b.BackgroundColor3 = C.mid   ; b.TextColor3 = C.dimtext
+	end
+	local function selB()
+		b.BackgroundColor3 = C.white ; b.TextColor3 = C.black
+		a.BackgroundColor3 = C.mid   ; a.TextColor3 = C.dimtext
+	end
+	selA()
+	return selA, selB
+end
+
+local sg = Instance.new("ScreenGui")
+sg.Name            = "TerrainToolsZynn"
+sg.ResetOnSpawn    = false
+sg.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
+sg.Parent          = player.PlayerGui
+
+local PANEL_W     = 220
+local PANEL_H     = 340
+local TITLE_H     = 32
+local isMinimized = false
+
+local main = Instance.new("Frame")
+main.Name              = "Main"
+main.Size              = UDim2.new(0, PANEL_W, 0, PANEL_H)
+main.Position          = UDim2.new(0, 12, 0, 60)
+main.BackgroundColor3  = C.bg
+main.BorderSizePixel   = 0
+main.ClipsDescendants  = true
+main.Parent            = sg
+corner(10, main)
+stroke(C.border, 1, main)
+
+local titleBar = Instance.new("Frame")
+titleBar.Size             = UDim2.new(1, 0, 0, TITLE_H)
+titleBar.BackgroundColor3 = C.white
+titleBar.BorderSizePixel  = 0
+titleBar.ClipsDescendants = true
+titleBar.Parent           = main
+corner(10, titleBar)
+
+local tbFill = Instance.new("Frame")
+tbFill.Size             = UDim2.new(1,0,0,10)
+tbFill.Position         = UDim2.new(0,0,1,-10)
+tbFill.BackgroundColor3 = C.white
+tbFill.BorderSizePixel  = 0
+tbFill.Parent           = titleBar
+
+Label{
+	text   = "⛏  Terrain Tools — Zynn",
+	parent = titleBar,
+	pos    = UDim2.new(0,10,0,0),
+	size   = UDim2.new(1,-42,1,0),
+	textSize = 11,
+	color  = C.black,
+	xAlign = Enum.TextXAlignment.Left,
+}
+
+local minBtn = Instance.new("TextButton")
+minBtn.Size             = UDim2.new(0,24,0,24)
+minBtn.Position         = UDim2.new(1,-28,0.5,-12)
+minBtn.BackgroundColor3 = Color3.fromRGB(200,200,200)
+minBtn.TextColor3       = C.black
+minBtn.Text             = "—"
+minBtn.TextSize         = 13
+minBtn.Font             = Enum.Font.GothamBold
+minBtn.BorderSizePixel  = 0
+minBtn.AutoButtonColor  = false
+minBtn.ClipsDescendants = true
+minBtn.Parent           = titleBar
+corner(6, minBtn)
+
+minBtn.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
+		main:TweenSize(UDim2.new(0,PANEL_W,0,TITLE_H),
+			Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.18, true)
+		minBtn.Text = "□"
+	else
+		main:TweenSize(UDim2.new(0,PANEL_W,0,PANEL_H),
+			Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.18, true)
+		minBtn.Text = "—"
+	end
+end)
+
+local panelDragging = false
+local panelDragStart, panelStartPos
+
+titleBar.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1
+	or i.UserInputType == Enum.UserInputType.Touch then
+		panelDragging  = true
+		panelDragStart = i.Position
+		panelStartPos  = main.Position
+	end
+end)
+titleBar.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1
+	or i.UserInputType == Enum.UserInputType.Touch then
+		panelDragging = false
+	end
+end)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size                  = UDim2.new(1,0,1,-TITLE_H)
+scroll.Position              = UDim2.new(0,0,0,TITLE_H)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel       = 0
+scroll.ScrollBarThickness    = 3
+scroll.ScrollBarImageColor3  = C.mid
+scroll.CanvasSize            = UDim2.new(0,0,0,0)
+scroll.AutomaticCanvasSize   = Enum.AutomaticSize.Y
+scroll.ClipsDescendants      = true
+scroll.Parent                = main
+
+local body = Instance.new("Frame")
+body.Size              = UDim2.new(1,0,0,0)
+body.AutomaticSize     = Enum.AutomaticSize.Y
+body.BackgroundTransparency = 1
+body.BorderSizePixel   = 0
+body.Parent            = scroll
+
+local bodyList = Instance.new("UIListLayout")
+bodyList.Padding    = UDim.new(0,5)
+bodyList.SortOrder  = Enum.SortOrder.LayoutOrder
+bodyList.Parent     = body
+
+local bodyPad = Instance.new("UIPadding")
+bodyPad.PaddingLeft   = UDim.new(0,10)
+bodyPad.PaddingRight  = UDim.new(0,10)
+bodyPad.PaddingTop    = UDim.new(0,6)
+bodyPad.PaddingBottom = UDim.new(0,6)
+bodyPad.Parent        = body
+
+local function sectionLbl(txt, order)
+	local l = Label{
+		text     = txt,
+		parent   = body,
+		size     = UDim2.new(1,0,0,12),
+		textSize = 9,
+		color    = C.dimtext,
+		xAlign   = Enum.TextXAlignment.Left,
+	}
+	l.LayoutOrder = order
+	return l
+end
+
+local function card(h, order)
+	local f = Instance.new("Frame")
+	f.Size             = UDim2.new(1,0,0,h)
+	f.BackgroundColor3 = C.card
+	f.BorderSizePixel  = 0
+	f.LayoutOrder      = order
+	f.ClipsDescendants = true
+	f.Parent           = body
+	corner(8, f)
+	return f
+end
+
+sectionLbl("STATUS", 10)
+local statusCard = card(30, 11)
+
+local toggleBtn = Btn{text="OFF", parent=statusCard,
+	pos=UDim2.new(0,6,0.5,-10), size=UDim2.new(0,44,0,20),
+	bg=C.mid, fg=C.dimtext, textSize=11}
+local statusLbl = Label{text="Brush is OFF", parent=statusCard,
+	pos=UDim2.new(0,56,0,0), size=UDim2.new(1,-62,1,0),
+	textSize=10, color=C.dimtext, xAlign=Enum.TextXAlignment.Left}
+
+toggleBtn.MouseButton1Click:Connect(function()
+	brushActive = not brushActive
+	if brushActive then
+		toggleBtn.Text             = "ON"
+		toggleBtn.BackgroundColor3 = C.green
+		toggleBtn.TextColor3       = C.black
+		statusLbl.Text             = "Brush is ON"
+		statusLbl.TextColor3       = C.text
+	else
+		toggleBtn.Text             = "OFF"
+		toggleBtn.BackgroundColor3 = C.mid
+		toggleBtn.TextColor3       = C.dimtext
+		statusLbl.Text             = "Brush is OFF"
+		statusLbl.TextColor3       = C.dimtext
+	end
+end)
+
+sectionLbl("TOOL MODE", 20)
+local toolCard = card(30, 21)
+
+local paintBtn = Btn{text="Paint", parent=toolCard,
+	pos=UDim2.new(0,6,0.5,-10), size=UDim2.new(0,88,0,20), textSize=11}
+local eraseBtn = Btn{text="Erase", parent=toolCard,
+	pos=UDim2.new(0,100,0.5,-10), size=UDim2.new(0,88,0,20), textSize=11}
+
+local setToolPaint, setToolErase = togglePair(paintBtn, eraseBtn)
+paintBtn.MouseButton1Click:Connect(function() toolMode="Paint" setToolPaint() end)
+eraseBtn.MouseButton1Click:Connect(function() toolMode="Erase" setToolErase() end)
+
+sectionLbl("BRUSH TYPE", 30)
+local typeCard = card(30, 31)
+
+local blockBtn = Btn{text="Block", parent=typeCard,
+	pos=UDim2.new(0,6,0.5,-10), size=UDim2.new(0,88,0,20), textSize=11}
+local ballBtn  = Btn{text="Ball",  parent=typeCard,
+	pos=UDim2.new(0,100,0.5,-10), size=UDim2.new(0,88,0,20), textSize=11}
+
+local setBlock, setBall = togglePair(blockBtn, ballBtn)
+blockBtn.MouseButton1Click:Connect(function() brushType="FillBlock" setBlock() end)
+ballBtn.MouseButton1Click:Connect(function()  brushType="FillBall"  setBall()  end)
+
+sectionLbl("BRUSH SIZE", 40)
+local sizeCard = card(50, 41)
+
+local szDecBtn = Btn{text="−", parent=sizeCard,
+	pos=UDim2.new(0,6,0,4), size=UDim2.new(0,26,0,20),
+	bg=C.mid, fg=C.white, textSize=14}
+local szVal = Label{text=tostring(brushSize), parent=sizeCard,
+	pos=UDim2.new(0,36,0,4), size=UDim2.new(0,46,0,20),
+	textSize=12, color=C.white, xAlign=Enum.TextXAlignment.Center}
+local szIncBtn = Btn{text="+", parent=sizeCard,
+	pos=UDim2.new(0,86,0,4), size=UDim2.new(0,26,0,20),
+	bg=C.mid, fg=C.white, textSize=14}
+
+local presetRow = Instance.new("Frame")
+presetRow.Size             = UDim2.new(1,-14,0,16)
+presetRow.Position         = UDim2.new(0,6,0,28)
+presetRow.BackgroundTransparency = 1
+presetRow.ClipsDescendants = true
+presetRow.Parent           = sizeCard
+
+local presetList = Instance.new("UIListLayout")
+presetList.FillDirection = Enum.FillDirection.Horizontal
+presetList.Padding       = UDim.new(0,3)
+presetList.Parent        = presetRow
+
+for _, v in ipairs({4, 8, 16, 32, 64}) do
+	local pb = Instance.new("TextButton")
+	pb.Size             = UDim2.new(0,30,0,15)
+	pb.BackgroundColor3 = C.mid
+	pb.BorderSizePixel  = 0
+	pb.Text             = tostring(v)
+	pb.TextColor3       = C.dimtext
+	pb.TextSize         = 9
+	pb.Font             = F
+	pb.AutoButtonColor  = false
+	pb.ClipsDescendants = true
+	pb.Parent           = presetRow
+	corner(4, pb)
+	pb.MouseButton1Click:Connect(function()
+		brushSize = v
+		szVal.Text = tostring(v)
+	end)
+end
+
+szDecBtn.MouseButton1Click:Connect(function()
+	brushSize = math.max(2, brushSize - 2)
+	szVal.Text = tostring(brushSize)
+end)
+szIncBtn.MouseButton1Click:Connect(function()
+	brushSize = math.min(128, brushSize + 2)
+	szVal.Text = tostring(brushSize)
+end)
+
+sectionLbl("OPACITY", 50)
+local opCard = card(30, 51)
+
+local opDecBtn = Btn{text="−", parent=opCard,
+	pos=UDim2.new(0,6,0.5,-10), size=UDim2.new(0,26,0,20),
+	bg=C.mid, fg=C.white, textSize=14}
+local opVal = Label{text="100%", parent=opCard,
+	pos=UDim2.new(0,36,0,0), size=UDim2.new(0,52,1,0),
+	textSize=11, color=C.white, xAlign=Enum.TextXAlignment.Center}
+local opIncBtn = Btn{text="+", parent=opCard,
+	pos=UDim2.new(0,92,0.5,-10), size=UDim2.new(0,26,0,20),
+	bg=C.mid, fg=C.white, textSize=14}
+
+local opBarBg = Instance.new("Frame")
+opBarBg.Size             = UDim2.new(1,-130,0,6)
+opBarBg.Position         = UDim2.new(0,124,0.5,-3)
+opBarBg.BackgroundColor3 = C.mid
+opBarBg.BorderSizePixel  = 0
+opBarBg.ClipsDescendants = true
+opBarBg.Parent           = opCard
+corner(3, opBarBg)
+
+local opBar = Instance.new("Frame")
+opBar.Size             = UDim2.new(1,0,1,0)
+opBar.BackgroundColor3 = C.white
+opBar.BorderSizePixel  = 0
+opBar.Parent           = opBarBg
+corner(3, opBar)
+
+local function updateOpacity(v)
+	brushOpacity = math.clamp(math.floor(v * 10 + 0.5) / 10, 0.1, 1.0)
+	opVal.Text   = math.floor(brushOpacity * 100) .. "%"
+	opBar.Size   = UDim2.new(brushOpacity, 0, 1, 0)
+end
+opDecBtn.MouseButton1Click:Connect(function() updateOpacity(brushOpacity - 0.1) end)
+opIncBtn.MouseButton1Click:Connect(function() updateOpacity(brushOpacity + 0.1) end)
+
+sectionLbl("HEIGHT LOCK", 60)
+local htCard = card(30, 61)
+
+local htToggle = Btn{text="OFF", parent=htCard,
+	pos=UDim2.new(0,6,0.5,-10), size=UDim2.new(0,44,0,20),
+	bg=C.mid, fg=C.dimtext, textSize=11}
+local htLbl = Label{text="Y = 0  (disabled)", parent=htCard,
+	pos=UDim2.new(0,56,0,0), size=UDim2.new(0,80,1,0),
+	textSize=10, color=C.dimtext, xAlign=Enum.TextXAlignment.Left}
+local htSetBtn = Btn{text="Set Y", parent=htCard,
+	pos=UDim2.new(1,-50,0.5,-10), size=UDim2.new(0,44,0,20),
+	bg=C.mid, fg=C.text, textSize=10}
+
+htToggle.MouseButton1Click:Connect(function()
+	heightMode = not heightMode
+	if heightMode then
+		htToggle.Text             = "ON"
+		htToggle.BackgroundColor3 = C.white
+		htToggle.TextColor3       = C.black
+		htLbl.Text                = "Y ≤ " .. math.floor(heightLimit)
+		htLbl.TextColor3          = C.text
+	else
+		htToggle.Text             = "OFF"
+		htToggle.BackgroundColor3 = C.mid
+		htToggle.TextColor3       = C.dimtext
+		htLbl.Text                = "Y = " .. math.floor(heightLimit) .. " (off)"
+		htLbl.TextColor3          = C.dimtext
+	end
+end)
+
+htSetBtn.MouseButton1Click:Connect(function()
+	local ray = camera:ScreenPointToRay(mouse.X, mouse.Y)
+	local rp  = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	if player.Character then
+		rp.FilterDescendantsInstances = {player.Character}
+	end
+	local r = Workspace:Raycast(ray.Origin, ray.Direction * 1000, rp)
+	if r then
+		heightLimit = mround(r.Position.Y)
+		htLbl.Text  = (heightMode and "Y ≤ " or "Y = ") .. heightLimit
+			.. (heightMode and "" or " (off)")
+	end
+end)
+
+sectionLbl("MATERIAL", 70)
+
+local matInfoCard = card(28, 71)
+
+local matColorDot = Instance.new("Frame")
+matColorDot.Size             = UDim2.new(0,16,0,16)
+matColorDot.Position         = UDim2.new(0,8,0.5,-8)
+matColorDot.BackgroundColor3 = Color3.fromRGB(106,127,63)
+matColorDot.BorderSizePixel  = 0
+matColorDot.Parent           = matInfoCard
+corner(4, matColorDot)
+
+local matSelLbl = Label{text="Grass", parent=matInfoCard,
+	pos=UDim2.new(0,30,0,0), size=UDim2.new(1,-36,1,0),
+	textSize=11, color=C.white, xAlign=Enum.TextXAlignment.Left}
+
+local matHScroll = Instance.new("ScrollingFrame")
+matHScroll.Size                  = UDim2.new(1,0,0,52)
+matHScroll.BackgroundColor3      = C.surface
+matHScroll.BorderSizePixel       = 0
+matHScroll.ScrollBarThickness    = 3
+matHScroll.ScrollBarImageColor3  = C.mid
+matHScroll.ScrollingDirection    = Enum.ScrollingDirection.X
+matHScroll.CanvasSize            = UDim2.new(0,0,0,0)
+matHScroll.AutomaticCanvasSize   = Enum.AutomaticSize.X
+matHScroll.LayoutOrder           = 72
+matHScroll.ClipsDescendants      = true
+matHScroll.Parent                = body
+corner(8, matHScroll)
+
+local matHList = Instance.new("UIListLayout")
+matHList.FillDirection     = Enum.FillDirection.Horizontal
+matHList.Padding           = UDim.new(0,5)
+matHList.SortOrder         = Enum.SortOrder.LayoutOrder
+matHList.VerticalAlignment = Enum.VerticalAlignment.Center
+matHList.Parent            = matHScroll
+
+local matHPad = Instance.new("UIPadding")
+matHPad.PaddingLeft   = UDim.new(0,6)
+matHPad.PaddingRight  = UDim.new(0,6)
+matHPad.PaddingTop    = UDim.new(0,6)
+matHPad.PaddingBottom = UDim.new(0,6)
+matHPad.Parent        = matHScroll
+
+local function isDark(col)
+	return (col.R * 0.299 + col.G * 0.587 + col.B * 0.114) < 0.45
+end
+
+local matBtns       = {}
+local selectedMatBtn = nil
+
+local function selectMat(m, btn)
+	selMat                       = m.mat
+	matSelLbl.Text               = m.name
+	matColorDot.BackgroundColor3 = m.col
+	for _, b in pairs(matBtns) do
+		b.BorderSizePixel      = 0
+		b.BackgroundTransparency = 0.15
+	end
+	btn.BorderSizePixel      = 2
+	btn.BackgroundTransparency = 0
+	selectedMatBtn           = btn
+end
+
+for i, m in ipairs(MATERIALS) do
+	local wrap = Instance.new("Frame")
+	wrap.Size                  = UDim2.new(0,40,0,40)
+	wrap.BackgroundTransparency = 1
+	wrap.LayoutOrder           = i
+	wrap.Parent                = matHScroll
+
+	local btn = Instance.new("TextButton")
+	btn.Size             = UDim2.new(1,0,1,0)
+	btn.BackgroundColor3 = m.col
+	btn.BorderSizePixel  = 0
+	btn.BorderColor3     = C.white
+	btn.Text             = ""
+	btn.AutoButtonColor  = false
+	btn.ClipsDescendants = true
+	btn.Parent           = wrap
+	corner(6, btn)
+
+	local nameLbl = Instance.new("TextLabel")
+	nameLbl.Size              = UDim2.new(1,0,1,0)
+	nameLbl.BackgroundTransparency = 1
+	nameLbl.Text              = m.name:sub(1,5)
+	nameLbl.TextSize          = 8
+	nameLbl.Font              = Enum.Font.GothamBold
+	nameLbl.TextColor3        = isDark(m.col)
+		and Color3.fromRGB(255,255,255) or Color3.fromRGB(30,30,30)
+	nameLbl.TextXAlignment    = Enum.TextXAlignment.Center
+	nameLbl.TextYAlignment    = Enum.TextYAlignment.Center
+	nameLbl.TextWrapped       = true
+	nameLbl.ClipsDescendants  = true
+	nameLbl.Parent            = btn
+
+	matBtns[i] = btn
+
+	btn.MouseButton1Click:Connect(function()
+		selectMat(m, btn)
+	end)
+
+	if m.name == "Grass" then
+		task.defer(function() selectMat(m, btn) end)
+	end
+end
+
+sectionLbl("CUSTOM COLOR", 80)
+local colorCard = card(88, 81)
+
+local ccToggle = Btn{text="OFF", parent=colorCard,
+	pos=UDim2.new(0,6,0,5), size=UDim2.new(0,44,0,18),
+	bg=C.mid, fg=C.dimtext, textSize=10}
+local ccLabel = Label{text="Use custom color", parent=colorCard,
+	pos=UDim2.new(0,56,0,5), size=UDim2.new(1,-100,0,18),
+	textSize=9, color=C.dimtext, xAlign=Enum.TextXAlignment.Left}
+
+local ccPreview = Instance.new("Frame")
+ccPreview.Size             = UDim2.new(0,18,0,18)
+ccPreview.Position         = UDim2.new(1,-24,0,5)
+ccPreview.BackgroundColor3 = customColor
+ccPreview.BorderSizePixel  = 0
+ccPreview.Parent           = colorCard
+corner(4, ccPreview)
+stroke(C.border, 1, ccPreview)
+
+local function applyMaterialColor()
+	pcall(function()
+		terrain:SetMaterialColor(selMat, customColor)
+	end)
+end
+
+ccToggle.MouseButton1Click:Connect(function()
+	useCustomColor = not useCustomColor
+	if useCustomColor then
+		ccToggle.Text             = "ON"
+		ccToggle.BackgroundColor3 = C.white
+		ccToggle.TextColor3       = C.black
+		ccLabel.TextColor3        = C.text
+		applyMaterialColor()
+	else
+		ccToggle.Text             = "OFF"
+		ccToggle.BackgroundColor3 = C.mid
+		ccToggle.TextColor3       = C.dimtext
+		ccLabel.TextColor3        = C.dimtext
+	end
+end)
+
+local SLIDER_COLORS = {
+	R = Color3.fromRGB(220, 70,  70),
+	G = Color3.fromRGB(70,  200, 100),
+	B = Color3.fromRGB(70,  130, 220),
+}
+local sliderTracks = {}
+local sliderVals   = {R=255, G=255, B=255}
+
+local function updateCustomColor()
+	customColor                = Color3.fromRGB(sliderVals.R, sliderVals.G, sliderVals.B)
+	ccPreview.BackgroundColor3 = customColor
+	if useCustomColor then
+		applyMaterialColor()
+	end
+end
+
+local function makeSlider(ch, yOff)
+	local rowH = 20
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size              = UDim2.new(0,12,0,rowH)
+	lbl.Position          = UDim2.new(0,6,0,yOff)
+	lbl.BackgroundTransparency = 1
+	lbl.Text              = ch
+	lbl.TextSize          = 9
+	lbl.Font              = Enum.Font.GothamBold
+	lbl.TextColor3        = SLIDER_COLORS[ch]
+	lbl.TextXAlignment    = Enum.TextXAlignment.Center
+	lbl.TextYAlignment    = Enum.TextYAlignment.Center
+	lbl.ClipsDescendants  = true
+	lbl.Parent            = colorCard
+
+	local valLbl = Instance.new("TextLabel")
+	valLbl.Size              = UDim2.new(0,26,0,rowH)
+	valLbl.Position          = UDim2.new(1,-30,0,yOff)
+	valLbl.BackgroundTransparency = 1
+	valLbl.Text              = "255"
+	valLbl.TextSize          = 9
+	valLbl.Font              = F
+	valLbl.TextColor3        = C.text
+	valLbl.TextXAlignment    = Enum.TextXAlignment.Right
+	valLbl.TextYAlignment    = Enum.TextYAlignment.Center
+	valLbl.ClipsDescendants  = true
+	valLbl.Parent            = colorCard
+
+	local trackBg = Instance.new("Frame")
+	trackBg.Size             = UDim2.new(1,-50,0,6)
+	trackBg.Position         = UDim2.new(0,22,0, yOff + rowH/2 - 3)
+	trackBg.BackgroundColor3 = C.mid
+	trackBg.BorderSizePixel  = 0
+	trackBg.ClipsDescendants = false
+	trackBg.Parent           = colorCard
+	corner(3, trackBg)
+
+	local trackFill = Instance.new("Frame")
+	trackFill.Size             = UDim2.new(1,0,1,0)
+	trackFill.BackgroundColor3 = SLIDER_COLORS[ch]
+	trackFill.BorderSizePixel  = 0
+	trackFill.Parent           = trackBg
+	corner(3, trackFill)
+
+	local thumb = Instance.new("Frame")
+	thumb.Size             = UDim2.new(0,10,0,10)
+	thumb.Position         = UDim2.new(1,-5,0.5,-5)
+	thumb.BackgroundColor3 = C.white
+	thumb.BorderSizePixel  = 0
+	thumb.ZIndex           = 5
+	thumb.Parent           = trackBg
+	corner(5, thumb)
+
+	sliderTracks[ch] = trackBg
+
+	local function applyVal(v)
+		sliderVals[ch] = math.clamp(mround(v), 0, 255)
+		local pct      = sliderVals[ch] / 255
+		trackFill.Size     = UDim2.new(pct, 0, 1, 0)
+		thumb.Position     = UDim2.new(pct, -5, 0.5, -5)
+		valLbl.Text        = tostring(sliderVals[ch])
+		updateCustomColor()
+	end
+	applyVal(255)
+
+	local function getPct(inputPos)
+		local abs = trackBg.AbsolutePosition
+		local sz  = trackBg.AbsoluteSize
+		if sz.X == 0 then return 0 end
+		return math.clamp((inputPos.X - abs.X) / sz.X, 0, 1)
+	end
+
+	trackBg.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1
+		or i.UserInputType == Enum.UserInputType.Touch then
+			draggingSlider = ch
+			applyVal(getPct(i.Position) * 255)
+		end
+	end)
+	thumb.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1
+		or i.UserInputType == Enum.UserInputType.Touch then
+			draggingSlider = ch
+		end
+	end)
+
+	return applyVal
+end
+
+local applyR = makeSlider("R", 28)
+local applyG = makeSlider("G", 52)
+local applyB = makeSlider("B", 76)
+
+sectionLbl("ACTIONS", 90)
+local actCard = card(30, 91)
+
+local undoBtn = Btn{text="↩ Undo", parent=actCard,
+	pos=UDim2.new(0,6,0.5,-10), size=UDim2.new(0,56,0,20),
+	bg=C.mid, fg=C.text, textSize=11}
+local redoBtn = Btn{text="↪ Redo", parent=actCard,
+	pos=UDim2.new(0,67,0.5,-10), size=UDim2.new(0,56,0,20),
+	bg=C.mid, fg=C.text, textSize=11}
+local clrBtn  = Btn{text="🗑 Clear Log", parent=actCard,
+	pos=UDim2.new(0,128,0.5,-10), size=UDim2.new(0,72,0,20),
+	bg=C.mid, fg=C.dimtext, textSize=10}
+
+sectionLbl("GENERATE CODE", 100)
+local genCard = card(30, 101)
+local genBtn  = Btn{text="⚙ Generate Lua", parent=genCard,
+	pos=UDim2.new(0,6,0.5,-10), size=UDim2.new(1,-12,0,20),
+	bg=C.mid, fg=C.text, textSize=11}
+
+local spacer = Instance.new("Frame")
+spacer.Size               = UDim2.new(1,0,0,2)
+spacer.BackgroundTransparency = 1
+spacer.LayoutOrder        = 199
+spacer.Parent             = body
+
+local cp = Instance.new("Frame")
+cp.Size             = UDim2.new(0,260,0,220)
+cp.Position         = UDim2.new(0.5,-130,0.5,-110)
+cp.BackgroundColor3 = C.surface
+cp.BorderSizePixel  = 0
+cp.Visible          = false
+cp.ZIndex           = 20
+cp.ClipsDescendants = true
+cp.Parent           = sg
+corner(10, cp)
+stroke(C.border, 1, cp)
+
+local cpHeader = Instance.new("Frame")
+cpHeader.Size             = UDim2.new(1,0,0,32)
+cpHeader.BackgroundColor3 = C.white
+cpHeader.BorderSizePixel  = 0
+cpHeader.ZIndex           = 20
+cpHeader.ClipsDescendants = true
+cpHeader.Parent           = cp
+corner(10, cpHeader)
+
+local cpHFill = Instance.new("Frame")
+cpHFill.Size             = UDim2.new(1,0,0,10)
+cpHFill.Position         = UDim2.new(0,0,1,-10)
+cpHFill.BackgroundColor3 = C.white
+cpHFill.BorderSizePixel  = 0
+cpHFill.ZIndex           = 20
+cpHFill.Parent           = cpHeader
+
+Label{text="Generated Code", parent=cpHeader,
+	pos=UDim2.new(0,12,0,0), size=UDim2.new(1,-40,1,0),
+	textSize=12, color=C.black, zIndex=20}
+
+local cpClose = Btn{text="✕", parent=cpHeader,
+	pos=UDim2.new(1,-28,0.5,-11), size=UDim2.new(0,22,0,22),
+	bg=C.mid, fg=C.white, textSize=11, zIndex=20}
+cpClose.MouseButton1Click:Connect(function() cp.Visible = false end)
+
+local cpDragging = false
+local cpDS, cpSP
+
+cpHeader.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1
+	or i.UserInputType == Enum.UserInputType.Touch then
+		cpDragging = true
+		cpDS = i.Position
+		cpSP = cp.Position
+	end
+end)
+cpHeader.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1
+	or i.UserInputType == Enum.UserInputType.Touch then
+		cpDragging = false
+	end
+end)
+
+local codeWrap = Instance.new("Frame")
+codeWrap.Size             = UDim2.new(1,-12,1,-48)
+codeWrap.Position         = UDim2.new(0,6,0,36)
+codeWrap.BackgroundColor3 = C.card
+codeWrap.BorderSizePixel  = 0
+codeWrap.ClipsDescendants = true
+codeWrap.ZIndex           = 20
+codeWrap.Parent           = cp
+corner(6, codeWrap)
+
+local codeBox = Instance.new("TextBox")
+codeBox.Size              = UDim2.new(1,0,1,0)
+codeBox.BackgroundTransparency = 1
+codeBox.BorderSizePixel   = 0
+codeBox.Text              = "-- No code yet."
+codeBox.TextColor3        = Color3.fromRGB(190,190,190)
+codeBox.TextSize          = 9
+codeBox.Font              = Enum.Font.Code
+codeBox.MultiLine         = true
+codeBox.TextWrapped        = true
+codeBox.TextXAlignment    = Enum.TextXAlignment.Left
+codeBox.TextYAlignment    = Enum.TextYAlignment.Top
+codeBox.ClearTextOnFocus  = false
+codeBox.ClipsDescendants  = true
+codeBox.ZIndex            = 21
+codeBox.Parent            = codeWrap
+
+local cpCopy = Btn{text="Tap & Ctrl+C to copy", parent=cp,
+	pos=UDim2.new(0,6,1,-28), size=UDim2.new(1,-12,0,22),
+	bg=C.mid, fg=C.dimtext, textSize=10, zIndex=20}
+cpCopy.MouseButton1Click:Connect(function()
+	codeBox:CaptureFocus()
+	cpCopy.Text = "Select all, then Ctrl+C"
+	task.delay(2, function() cpCopy.Text = "Tap & Ctrl+C to copy" end)
+end)
+
+UserInputService.InputChanged:Connect(function(i)
+	local isMouse = i.UserInputType == Enum.UserInputType.MouseMovement
+	local isTouch = i.UserInputType == Enum.UserInputType.Touch
+	if not (isMouse or isTouch) then return end
+
+	if panelDragging then
+		local d = i.Position - panelDragStart
+		main.Position = UDim2.new(
+			panelStartPos.X.Scale, panelStartPos.X.Offset + d.X,
+			panelStartPos.Y.Scale, panelStartPos.Y.Offset + d.Y)
+	end
+
+	if cpDragging then
+		local d = i.Position - cpDS
+		cp.Position = UDim2.new(
+			cpSP.X.Scale, cpSP.X.Offset + d.X,
+			cpSP.Y.Scale, cpSP.Y.Offset + d.Y)
+	end
+
+	if draggingSlider then
+		local track = sliderTracks[draggingSlider]
+		if track then
+			local abs = track.AbsolutePosition
+			local sz  = track.AbsoluteSize
+			if sz.X > 0 then
+				local pct = math.clamp((i.Position.X - abs.X) / sz.X, 0, 1)
+				if draggingSlider == "R" then applyR(pct * 255)
+				elseif draggingSlider == "G" then applyG(pct * 255)
+				elseif draggingSlider == "B" then applyB(pct * 255) end
+			end
+		end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1
+	or i.UserInputType == Enum.UserInputType.Touch then
+		draggingSlider = nil
+	end
+end)
+
+
+local function getRegion(pos, size)
+	local half = size / 2
+	return Region3.new(
+		pos - Vector3.new(half, half, half),
+		pos + Vector3.new(half, half, half)
+	):ExpandToGrid(VS)
+end
+
+local function pushHistory(region, mB, oB, mA, oA)
+	table.insert(history, {region=region, mBefore=mB, oBefore=oB, mAfter=mA, oAfter=oA})
+	if #history > MAX_HISTORY then table.remove(history, 1) end
+	redoStack = {}
+end
+
+local function applyBrush(pos, mat, size, btype)
+	if btype == "FillBall" then
+		terrain:FillBall(pos, size / 2, mat)
+	else
+		terrain:FillBlock(CFrame.new(pos), Vector3.new(size, size, size), mat)
+	end
+end
+
+local function applyOpacity(region, targetMat, opacity)
+	if opacity >= 1.0 then return end
+	local ok, mats, occs = pcall(function()
+		return terrain:ReadVoxels(region, VS)
+	end)
+	if not ok then return end
+	local sx, sy, sz = mats.Size.X, mats.Size.Y, mats.Size.Z
+	for x = 1, sx do for y = 1, sy do for z = 1, sz do
+		if mats[x][y][z] == targetMat then
+			occs[x][y][z] = occs[x][y][z] * opacity
+		end
+	end end end
+	pcall(function() terrain:WriteVoxels(region, VS, mats, occs) end)
+end
+
+local function paintTerrain(pos)
+	if heightMode and pos.Y > heightLimit then return end
+
+	local snapSize    = brushSize
+	local snapBtype   = brushType
+	local snapMode    = toolMode
+	local snapMat     = selMat
+	local snapOpacity = brushOpacity
+	local snapColor   = useCustomColor and customColor or nil
+
+	local region = getRegion(pos, snapSize)
+	local okB, mB, oB = pcall(function()
+		return terrain:ReadVoxels(region, VS)
+	end)
+
+	if snapMode == "Paint" then
+		if useCustomColor then
+			pcall(function()
+				terrain:SetMaterialColor(snapMat, customColor)
+			end)
+		end
+		applyBrush(pos, snapMat, snapSize, snapBtype)
+		if snapOpacity < 1.0 then
+			applyOpacity(region, snapMat, snapOpacity)
+		end
+	else
+		applyBrush(pos, Enum.Material.Air, snapSize, snapBtype)
+	end
+
+	if okB then
+		local okA, mA, oA = pcall(function()
+			return terrain:ReadVoxels(region, VS)
+		end)
+		if okA then pushHistory(region, mB, oB, mA, oA) end
+	end
+
+	local rMin = region.CFrame.Position - region.Size * 0.5
+	local rMax = region.CFrame.Position + region.Size * 0.5
+
+	table.insert(paintedRegions, {
+		position    = pos,
+		size        = snapSize,
+		material    = snapMode == "Erase" and Enum.Material.Air or snapMat,
+		btype       = snapBtype,
+		mode        = snapMode,
+		opacity     = snapOpacity,
+		customColor = snapColor,
+		rMin        = rMin,
+		rMax        = rMax,
+	})
+end
+
+undoBtn.MouseButton1Click:Connect(function()
+	if #history == 0 then return end
+	local e = table.remove(history, #history)
+	table.insert(redoStack, e)
+	pcall(function() terrain:WriteVoxels(e.region, VS, e.mBefore, e.oBefore) end)
+end)
+
+redoBtn.MouseButton1Click:Connect(function()
+	if #redoStack == 0 then return end
+	local e = table.remove(redoStack, #redoStack)
+	table.insert(history, e)
+	pcall(function() terrain:WriteVoxels(e.region, VS, e.mAfter, e.oAfter) end)
+end)
+
+clrBtn.MouseButton1Click:Connect(function()
+	paintedRegions = {}
+	history        = {}
+	redoStack      = {}
+	codeBox.Text   = "-- No code yet."
+	cp.Visible     = false
+	clrBtn.Text        = "✓ Cleared"
+	clrBtn.TextColor3  = C.green
+	task.delay(1.5, function()
+		clrBtn.Text       = "🗑 Clear Log"
+		clrBtn.TextColor3 = C.dimtext
+	end)
+end)
+
+genBtn.MouseButton1Click:Connect(function()
+	if #paintedRegions == 0 then
+		codeBox.Text = "-- No terrain painted yet."
+		cp.Visible   = true
+		return
+	end
+
+	local lines = {
+		"local t = workspace.Terrain",
+		"",
+	}
+
+	local coloredMats = {}
+	local colorOrder  = {}
+	for _, r in ipairs(paintedRegions) do
+		if r.customColor and r.mode == "Paint" then
+			local mn = tostring(r.material):gsub("Enum%.Material%.", "")
+			if not coloredMats[mn] then
+				coloredMats[mn] = r.customColor
+				table.insert(colorOrder, mn)
+			end
+		end
+	end
+
+	if #colorOrder > 0 then
+		table.insert(lines, "-- Custom material colors")
+		for _, mn in ipairs(colorOrder) do
+			local col = coloredMats[mn]
+			table.insert(lines, string.format(
+				"t:SetMaterialColor(Enum.Material.%s, Color3.fromRGB(%d, %d, %d))",
+				mn,
+				mround(col.R * 255),
+				mround(col.G * 255),
+				mround(col.B * 255)
+			))
+		end
+		table.insert(lines, "")
+	end
+
+	for _, r in ipairs(paintedRegions) do
+		local mn = tostring(r.material):gsub("Enum%.Material%.", "")
+
+		if r.mode == "Erase" then
+			if r.btype == "FillBall" then
+				table.insert(lines, string.format(
+					"t:FillBall(Vector3.new(%g,%g,%g), %g, Enum.Material.Air)",
+					r.position.X, r.position.Y, r.position.Z, r.size / 2))
+			else
+				table.insert(lines, string.format(
+					"t:FillBlock(CFrame.new(%g,%g,%g), Vector3.new(%g,%g,%g), Enum.Material.Air)",
+					r.position.X, r.position.Y, r.position.Z, r.size, r.size, r.size))
+			end
+		else
+			if r.btype == "FillBall" then
+				table.insert(lines, string.format(
+					"t:FillBall(Vector3.new(%g,%g,%g), %g, Enum.Material.%s)",
+					r.position.X, r.position.Y, r.position.Z, r.size / 2, mn))
+			else
+				table.insert(lines, string.format(
+					"t:FillBlock(CFrame.new(%g,%g,%g), Vector3.new(%g,%g,%g), Enum.Material.%s)",
+					r.position.X, r.position.Y, r.position.Z,
+					r.size, r.size, r.size, mn))
+			end
+
+			if r.opacity and r.opacity < 1.0 and r.rMin and r.rMax then
+				table.insert(lines, string.format(
+					"do -- opacity %.0f%%", r.opacity * 100))
+				table.insert(lines, string.format(
+					"  local reg = Region3.new("
+					.. "Vector3.new(%g,%g,%g), Vector3.new(%g,%g,%g)"
+					.. "):ExpandToGrid(4)",
+					r.rMin.X, r.rMin.Y, r.rMin.Z,
+					r.rMax.X, r.rMax.Y, r.rMax.Z))
+				table.insert(lines,
+					"  local mats, occs = t:ReadVoxels(reg, 4)")
+				table.insert(lines,
+					"  for x=1,mats.Size.X do for y=1,mats.Size.Y do for z=1,mats.Size.Z do")
+				table.insert(lines, string.format(
+					"    if mats[x][y][z]==Enum.Material.%s then"
+					.. " occs[x][y][z]=occs[x][y][z]*%.2f end",
+					mn, r.opacity))
+				table.insert(lines, "  end end end")
+				table.insert(lines, "  t:WriteVoxels(reg, 4, mats, occs)")
+				table.insert(lines, "end")
+			end
+		end
+	end
+
+	codeBox.Text = table.concat(lines, "\n")
+	cp.Visible   = true
+end)
+
+local paintCD = false
+
+local function getHit(sx, sy)
+	local ray = camera:ScreenPointToRay(sx, sy)
+	local rp  = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	if player.Character then
+		rp.FilterDescendantsInstances = {player.Character}
+	end
+	local r = Workspace:Raycast(ray.Origin, ray.Direction * 1000, rp)
+	if r then
+		local v = r.Position
+		return Vector3.new(mround(v.X/4)*4, mround(v.Y/4)*4, mround(v.Z/4)*4)
+	end
+end
+
+local function tryAct(sx, sy)
+	if not brushActive or paintCD then return end
+	local pos = getHit(sx, sy)
+	if not pos then return end
+	paintCD = true
+	paintTerrain(pos)
+	task.delay(0.08, function() paintCD = false end)
+end
+
+UserInputService.TouchStarted:Connect(function(t, gp)
+	if gp then return end
+	touchPos = t.Position
+	isPainting = true
+	tryAct(t.Position.X, t.Position.Y)
+end)
+UserInputService.TouchMoved:Connect(function(t, gp)
+	if gp then return end
+	touchPos = t.Position
+end)
+UserInputService.TouchEnded:Connect(function()
+	isPainting = false
+	touchPos   = nil
+end)
+UserInputService.InputBegan:Connect(function(i, gp)
+	if gp then return end
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then
+		isPainting = true
+		tryAct(mouse.X, mouse.Y)
+	end
+end)
+UserInputService.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then
+		isPainting = false
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if not brushActive or not isPainting then return end
+	if touchPos then
+		tryAct(touchPos.X, touchPos.Y)
+	else
+		tryAct(mouse.X, mouse.Y)
+	end
+end)
+
+print("✔ Terrain Tools — Zynn loaded.")
