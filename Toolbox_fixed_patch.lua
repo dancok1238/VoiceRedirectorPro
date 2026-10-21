@@ -43,6 +43,20 @@ local LOCAL_KEYS = {          -- <<< DAFTAR KEY CADANGAN / PERCOBAAN
 local KEY_FILE = "balereot_key.txt"           -- key tersimpan agar tidak input ulang
 local GET_KEY_LINK = "https://discord.gg/HAkGRPayDn"  -- link untuk tombol GET KEY
 
+-- DAFTAR HARGA (tampil di layar key). Ubah teks di sini kalau harga berubah.
+local PRICES = {
+    {"Permanen", "Rp 35.000"},
+    {"Sebulan", "Rp 25.000"},
+    {"Seminggu", "Rp 10.000"},
+}
+
+-- PENGATURAN TRIAL GRATIS
+-- Pemakai baru boleh masuk TANPA key selama TRIAL_HOURS jam sejak pertama kali menjalankan.
+-- Setelah itu wajib memakai key. Diingat per akun lewat file lokal (butuh writefile/readfile).
+local TRIAL_ENABLED = true    -- <<< true = ada trial gratis, false = semua orang wajib key
+local TRIAL_HOURS = 24        -- <<< lama trial (jam)
+local TRIAL_FILE_PREFIX = "balereot_trial_"
+
 local C = {
     bg = Color3.fromRGB(8, 4, 16), panel = Color3.fromRGB(22, 12, 40),
     header = Color3.fromRGB(16, 8, 30), input = Color3.fromRGB(28, 16, 50),
@@ -137,6 +151,28 @@ local function saveKey(k)
     if writefile then pcall(writefile, KEY_FILE, k) end
 end
 
+local trialLeft = nil  -- sisa detik trial (nil = tidak sedang trial)
+
+-- return: true, sisaDetik  |  false, "expired"  |  false, "nofile"
+local function trialStatus()
+    if not TRIAL_ENABLED then return false, "off" end
+    if not (readfile and writefile and isfile) then return false, "nofile" end
+    local file = TRIAL_FILE_PREFIX .. player.UserId .. ".txt"
+    local now, total = os.time(), TRIAL_HOURS * 3600
+    if isfile(file) then
+        local ok, data = pcall(readfile, file)
+        local started = ok and tonumber(data)
+        if started then
+            local remaining = started + total - now
+            if remaining > 0 and remaining <= total then return true, remaining end
+            return false, "expired"
+        end
+    end
+    local wrote = pcall(writefile, file, tostring(now))
+    if not wrote then return false, "nofile" end
+    return true, total
+end
+
 local function requireKey()
     local saved = savedKey()
     if saved then
@@ -144,12 +180,18 @@ local function requireKey()
         if ok then return true end
     end
 
+    local trialOk, trialInfo = trialStatus()
+    if trialOk then
+        trialLeft = trialInfo
+        return true
+    end
+
     local kgui = new("ScreenGui", {Name = "BalereotKey", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 1000}, nil)
     local mounted = pcall(function() kgui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
     if not mounted or not kgui.Parent then kgui.Parent = player:WaitForChild("PlayerGui") end
 
     local box = new("Frame", {
-        Size = UDim2.fromOffset(320, 250), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(320, 338), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
         BackgroundColor3 = C.bg, BorderSizePixel = 0, Active = true, Draggable = true, ClipsDescendants = true,
     }, kgui)
     round(box, 14)
@@ -160,7 +202,7 @@ local function requireKey()
         img.Image = thumb(tonumber(BG_ASSET_ID) or 0, 420)
     end
     new("TextLabel", {Size = UDim2.new(1, -20, 0, 22), Position = UDim2.fromOffset(10, 14), BackgroundTransparency = 1, Text = "BALEREOT COMMUNITY", Font = Enum.Font.Arcade, TextSize = 16, TextColor3 = C.white}, box)
-    new("TextLabel", {Size = UDim2.new(1, -20, 0, 16), Position = UDim2.fromOffset(10, 38), BackgroundTransparency = 1, Text = "Masukkan key untuk melanjutkan", Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.sub}, box)
+    new("TextLabel", {Size = UDim2.new(1, -20, 0, 16), Position = UDim2.fromOffset(10, 38), BackgroundTransparency = 1, Text = (trialInfo == "expired") and "Trial gratis sudah habis. Masukkan key untuk lanjut" or "Masukkan key untuk melanjutkan", Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.sub}, box)
 
     local inputFrame = new("Frame", {Size = UDim2.new(1, -40, 0, 40), Position = UDim2.fromOffset(20, 78), BackgroundColor3 = C.input, BorderSizePixel = 0}, box)
     round(inputFrame, 8)
@@ -179,7 +221,18 @@ local function requireKey()
         return b
     end
     local checkBtn = makeBtn("CHECK KEY", 146, C.accent)
-    local getBtn = makeBtn("GET KEY", 190, C.input)
+    local getBtn = makeBtn("GET KEY / BELI DI DISCORD", 190, C.input)
+
+    -- Daftar harga
+    local priceBox = new("Frame", {Size = UDim2.new(1, -40, 0, 24 + #PRICES * 22 + 6), Position = UDim2.fromOffset(20, 236), BackgroundColor3 = C.input, BackgroundTransparency = 0.2, BorderSizePixel = 0}, box)
+    round(priceBox, 8)
+    stroke(priceBox, C.stroke, 1, 0.4)
+    new("TextLabel", {Size = UDim2.new(1, -16, 0, 18), Position = UDim2.fromOffset(8, 4), BackgroundTransparency = 1, Text = "HARGA KEY", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.accent2, TextXAlignment = Enum.TextXAlignment.Left}, priceBox)
+    for i, row in ipairs(PRICES) do
+        local y = 24 + (i - 1) * 22
+        new("TextLabel", {Size = UDim2.new(0.5, -8, 0, 20), Position = UDim2.fromOffset(8, y), BackgroundTransparency = 1, Text = row[1], Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left}, priceBox)
+        new("TextLabel", {Size = UDim2.new(0.5, -8, 0, 20), Position = UDim2.new(0.5, 0, 0, y), BackgroundTransparency = 1, Text = row[2], Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.yellow, TextXAlignment = Enum.TextXAlignment.Right}, priceBox)
+    end
 
     local result, attempts = nil, 0
     local function submit()
@@ -766,3 +819,12 @@ setTab("Model")
 gui.Parent = gui.Parent
 log("BALEREOT COMMUNITY TOOLBOX READY", C.green)
 log("Klik BC untuk show/hide", C.sub)
+
+-- Info trial
+if trialLeft then
+    local hours = math.floor(trialLeft / 3600)
+    local mins = math.floor((trialLeft % 3600) / 60)
+    log(("TRIAL GRATIS aktif, sisa %d jam %d menit"):format(hours, mins), C.yellow)
+    log("Setelah trial habis, wajib pakai key (GET KEY di Discord)", C.sub)
+    task.delay(trialLeft, function() gui:Destroy() end)
+end
