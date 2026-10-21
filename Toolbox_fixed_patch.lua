@@ -36,7 +36,7 @@ local BG_TRANSPARENCY = 0.6   -- 0 = jelas, 1 = hilang
 -- MENAMBAH KEY  : tambah satu baris baru di LOCAL_KEYS (jangan lupa koma di belakangnya).
 -- MENGHAPUS KEY : hapus baris key-nya dari LOCAL_KEYS (atau dari file daftar online).
 -- =====================================================================
-local KEY_LIST_URL = nil      -- <<< ISI LINK RAW DI SINI (contoh di atas). nil = tidak dipakai
+local KEY_LIST_URL = local KEY_LIST_URL = "https://raw.githubusercontent.com/dancok1238/VoiceRedirectorPro/main/keys.txt"     -- <<< ISI LINK RAW DI SINI (contoh di atas). nil = tidak dipakai
 local LOCAL_KEYS = {          -- <<< DAFTAR KEY CADANGAN / PERCOBAAN
     "BLR-E9Y8-DTG8-V5SU-TJQB|gahheyhdgdg",   -- <<< key percobaan. HAPUS baris ini kalau sudah selesai tes
     -- "BLR-GJKA-UXKJ-7ZED-Z5HE|Budi123|2026-12-31",   -- <<< contoh key (hapus tanda -- di depan agar aktif)
