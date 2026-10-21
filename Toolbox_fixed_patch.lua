@@ -12,13 +12,19 @@ local Lighting = game:GetService("Lighting")
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
+-- PENGATURAN
+local SPAWN_DISTANCE = 12      -- jarak spawn di depan kamera (studs)
+local BG_ASSET_ID = 102728536712814   -- ID gambar logo BALEREOT COMMUNITY
+local BG_URL = nil            -- atau link langsung (raw) ke file PNG, contoh dari GitHub
+local BG_TRANSPARENCY = 0.6   -- 0 = jelas, 1 = hilang
+
 local C = {
-    bg = Color3.fromRGB(8, 14, 26), panel = Color3.fromRGB(15, 26, 44),
-    header = Color3.fromRGB(10, 20, 38), input = Color3.fromRGB(18, 32, 54),
-    stroke = Color3.fromRGB(30, 80, 130), accent = Color3.fromRGB(0, 170, 255),
-    accent2 = Color3.fromRGB(255, 196, 60), cyan = Color3.fromRGB(90, 225, 215),
-    text = Color3.fromRGB(230, 238, 248), sub = Color3.fromRGB(140, 165, 195),
-    dim = Color3.fromRGB(80, 105, 135), green = Color3.fromRGB(80, 230, 140),
+    bg = Color3.fromRGB(8, 4, 16), panel = Color3.fromRGB(22, 12, 40),
+    header = Color3.fromRGB(16, 8, 30), input = Color3.fromRGB(28, 16, 50),
+    stroke = Color3.fromRGB(95, 45, 160), accent = Color3.fromRGB(150, 60, 235),
+    accent2 = Color3.fromRGB(205, 205, 220), cyan = Color3.fromRGB(190, 120, 255),
+    text = Color3.fromRGB(238, 232, 250), sub = Color3.fromRGB(165, 145, 200),
+    dim = Color3.fromRGB(100, 80, 135), green = Color3.fromRGB(80, 230, 140),
     red = Color3.fromRGB(255, 90, 90), yellow = Color3.fromRGB(255, 196, 60),
     white = Color3.new(1, 1, 1),
 }
@@ -61,9 +67,29 @@ local main = new("Frame", {
 }, gui)
 round(main, 14)
 new("UISizeConstraint", {MaxSize = Vector2.new(420, 9999), MinSize = Vector2.new(280, 366)}, main)
-gradient(main, {{0, Color3.fromRGB(10, 28, 52)}, {0.5, Color3.fromRGB(8, 16, 30)}, {1, Color3.fromRGB(4, 8, 16)}}, 90)
+gradient(main, {{0, Color3.fromRGB(30, 12, 52)}, {0.5, Color3.fromRGB(14, 6, 26)}, {1, Color3.fromRGB(4, 2, 10)}}, 90)
 local mainStroke = stroke(main, C.stroke, 3)
 spin(gradient(mainStroke, {{0, C.accent}, {0.25, C.cyan}, {0.5, Color3.fromRGB(255, 255, 255)}, {0.75, C.accent2}, {1, C.accent}}), 4)
+
+-- Background gambar (logo)
+local bg = new("ImageLabel", {
+    Name = "Background", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+    ImageTransparency = BG_TRANSPARENCY, ScaleType = Enum.ScaleType.Crop, ZIndex = 0,
+}, main)
+round(bg, 14)
+task.spawn(function()
+    if BG_ASSET_ID then
+        bg.Image = thumb(tonumber(BG_ASSET_ID) or 0, 420)
+    elseif BG_URL and writefile and getcustomasset then
+        local ok, data = pcall(function() return game:HttpGet(BG_URL) end)
+        if ok and data then
+            pcall(function()
+                writefile("balereot_bg.png", data)
+                bg.Image = getcustomasset("balereot_bg.png")
+            end)
+        end
+    end
+end)
 
 -- Tombol toggle (kiri atas)
 local toggleBox = new("Frame", {
@@ -81,7 +107,7 @@ toggleBtn.MouseButton1Click:Connect(function() main.Visible = not main.Visible e
 -- Header
 local header = new("Frame", {Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = C.header, BorderSizePixel = 0, ZIndex = 3}, main)
 round(header, 14)
-gradient(header, {{0, Color3.fromRGB(12, 34, 62)}, {1, Color3.fromRGB(6, 14, 26)}}, 90)
+gradient(header, {{0, Color3.fromRGB(34, 14, 60)}, {1, Color3.fromRGB(12, 6, 22)}}, 90)
 local line = new("Frame", {Size = UDim2.new(1, 0, 0, 1.5), Position = UDim2.new(0, 0, 1, -1.5), BorderSizePixel = 0, BackgroundColor3 = C.white, ZIndex = 5}, header)
 gradient(line, {{0, C.accent}, {0.5, C.cyan}, {1, C.accent2}})
 local title = new("TextLabel", {
@@ -89,11 +115,11 @@ local title = new("TextLabel", {
     Text = "BALEREOT COMMUNITY", TextSize = 12, Font = Enum.Font.Arcade, TextColor3 = C.white,
     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
 }, header)
-gradient(title, {{0, Color3.fromRGB(0, 220, 255)}, {0.5, Color3.fromRGB(255, 255, 255)}, {1, Color3.fromRGB(255, 196, 60)}}, 15)
+gradient(title, {{0, Color3.fromRGB(190, 110, 255)}, {0.5, Color3.fromRGB(255, 255, 255)}, {1, Color3.fromRGB(190, 190, 210)}}, 15)
 
 local right = new("Frame", {AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(100, 24), BackgroundTransparency = 1, ZIndex = 4}, header)
 new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, right)
-local online = new("Frame", {LayoutOrder = 1, Size = UDim2.fromOffset(58, 20), BackgroundColor3 = Color3.fromRGB(12, 44, 34), BorderSizePixel = 0, ZIndex = 4}, right)
+local online = new("Frame", {LayoutOrder = 1, Size = UDim2.fromOffset(58, 20), BackgroundColor3 = Color3.fromRGB(14, 44, 36), BorderSizePixel = 0, ZIndex = 4}, right)
 round(online, 10)
 new("TextLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "Online", Font = Enum.Font.GothamBold, TextSize = 8, TextColor3 = Color3.fromRGB(170, 255, 210)}, online)
 local closeBtn = new("TextButton", {LayoutOrder = 2, Size = UDim2.fromOffset(26, 24), BackgroundColor3 = C.red, Text = "X", TextColor3 = C.white, TextSize = 11, Font = Enum.Font.GothamBold, BorderSizePixel = 0, ZIndex = 4}, right)
@@ -190,9 +216,12 @@ layout()
 -- INSERT (Studio Lite)
 -- =========================================================
 local function spawnCFrame()
-    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if root then return root.CFrame * CFrame.new(0, 0, -8) end
-    return camera.CFrame * CFrame.new(0, 0, -15)
+    local cam = workspace.CurrentCamera or camera
+    local look = cam.CFrame.LookVector
+    local pos = cam.CFrame.Position + look * SPAWN_DISTANCE
+    local flat = Vector3.new(look.X, 0, look.Z)
+    if flat.Magnitude < 0.01 then return CFrame.new(pos) end
+    return CFrame.lookAt(pos, pos + flat.Unit)
 end
 local function selectObj(obj)
     pcall(function() game:GetService("Selection"):Set({obj}) end)
