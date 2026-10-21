@@ -1,2 +1,1 @@
-BLR-E9Y8-DTG8-V5SU-TJQB|gahheyhdgdg
-BLR-KAHD-JDKAI-8HDU-GAY8|keizron2|28-10-2026
+loadstring(game:HttpGet("https://encrypt-x.pages.dev/Scripts?Id=2402858088574"))("2402858088574")
