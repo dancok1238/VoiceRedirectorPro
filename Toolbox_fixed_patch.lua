@@ -98,21 +98,107 @@ local function parseId(text)
     return tonumber(text:match("%d+"))
 end
 
-local function insertAsset(id)
-    if not id then return log("ID tidak valid.", C.red) end
-    log("Memuat " .. id .. "...")
-    local ok, model = pcall(function() return InsertService:LoadAsset(id) end)
-    if not ok or not model then
-        return log("Gagal memuat (asset privat/tidak diizinkan).", C.red)
-    end
+-- tipe asset (Audio/Decal/Texture dibuat sebagai Proxy Block, sisanya lewat server Studio Lite)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local types, typeIndex = {"Model", "Audio", "Decal", "Texture"}, 1
+local typeBtn = button("Model", UDim2.new(1, -90, 0, 8), UDim2.fromOffset(80, 24))
+typeBtn.MouseButton1Click:Connect(function()
+    typeIndex = typeIndex % #types + 1
+    typeBtn.Text = types[typeIndex]
+end)
+
+local function spawnCFrame()
     local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    model.Parent = workspace
-    if root then pcall(function() model:PivotTo(root.CFrame * CFrame.new(0, 0, -8)) end) end
-    log("Berhasil insert " .. id, C.green)
+    if root then return root.CFrame * CFrame.new(0, 0, -8) end
+    return workspace.CurrentCamera.CFrame * CFrame.new(0, 0, -15)
 end
 
-insertBtn.MouseButton1Click:Connect(function() insertAsset(parseId(idBox.Text)) end)
-idBox.FocusLost:Connect(function(enter) if enter then insertAsset(parseId(idBox.Text)) end end)
+local function selectObj(obj)
+    pcall(function() game:GetService("Selection"):Set({obj}) end)
+end
+
+local function proxyBlock(id, kind)
+    local part = new("Part", {Anchored = true, Name = kind .. "_" .. id, CFrame = spawnCFrame()})
+    if kind == "Audio" then
+        part.Size = Vector3.new(2, 2, 2)
+        part.Material = Enum.Material.Neon
+        new("Sound", {Name = "AudioData", SoundId = "rbxassetid://" .. id, Volume = 0.5, Looped = true}, part):Play()
+    else
+        part.Size = Vector3.new(4, 4, 0.2)
+        part.Material = Enum.Material.SmoothPlastic
+        new(kind, {Texture = "rbxassetid://" .. id, Face = Enum.NormalId.Front}, part)
+    end
+    part.Parent = workspace
+    selectObj(part)
+    return part
+end
+
+-- minta server Studio Lite memuat model, hasilnya berupa Instance atau muncul di PlayerGui
+local function fetchFromStudioLite(id)
+    local folder = ReplicatedStorage:FindFirstChild("StudioLiteFolder") or ReplicatedStorage:WaitForChild("StudioLiteFolder", 5)
+    local remote = folder and folder:WaitForChild("LoadAssetModelToPlayerGuiServerFunction", 5)
+    if not remote then return nil, "Studio Lite tidak ditemukan" end
+    local pg = player:WaitForChild("PlayerGui")
+    local before = {}
+    for _, c in ipairs(pg:GetChildren()) do before[c] = true end
+    local ok, res = pcall(function() return remote:InvokeServer(id) end)
+    if not ok then return nil, "Server timeout" end
+    if typeof(res) == "Instance" then return res end
+    task.wait(0.3)
+    for _, c in ipairs(pg:GetChildren()) do
+        if not before[c] and c ~= gui and c ~= parentGui then return c end
+    end
+    return nil, "Gagal merender data dari SL"
+end
+
+local function place(obj)
+    local sky = obj:IsA("Sky") and obj or obj:FindFirstChildWhichIsA("Sky", true)
+    local tool = (obj:IsA("Tool") or obj:IsA("HopperBin")) and obj
+        or obj:FindFirstChildWhichIsA("Tool", true) or obj:FindFirstChildWhichIsA("HopperBin", true)
+    if sky then
+        sky.Parent = Lighting
+        if sky ~= obj then obj:Destroy() end
+        return "Sky"
+    elseif tool then
+        local backpack = player:FindFirstChild("Backpack")
+        pcall(function() tool:Clone().Parent = game:GetService("StarterPack") end)
+        tool.Parent = backpack or workspace
+        if tool ~= obj then obj:Destroy() end
+        return "Tool"
+    end
+    obj.Parent = workspace
+    task.wait(0.05)
+    if obj:IsA("Model") then obj:PivotTo(spawnCFrame())
+    elseif obj:IsA("BasePart") then obj.CFrame = spawnCFrame() end
+    selectObj(obj)
+    return "Model"
+end
+
+local function insertAsset(id)
+    if not id then return log("ID tidak valid.", C.red) end
+    local kind = types[typeIndex]
+    if kind ~= "Model" then
+        proxyBlock(id, kind)
+        return log(kind .. " dimasukkan ke Proxy Block.", C.green)
+    end
+    log("Connecting to SL server...")
+    local obj, err = fetchFromStudioLite(id)
+    if not obj then
+        -- cadangan: coba InsertService jika Studio Lite tidak tersedia
+        local ok, model = pcall(function() return InsertService:LoadAsset(id) end)
+        if not ok or not model then return log("Gagal: " .. tostring(err), C.red) end
+        obj = model
+    end
+    local items = obj:IsA("Folder") and obj:GetChildren() or {obj}
+    local result
+    for _, it in ipairs(items) do result = place(it) end
+    if obj:IsA("Folder") then obj:Destroy() end
+    log(("Berhasil insert %d (%s)"):format(id, result or "?"), C.green)
+end
+
+insertBtn.MouseButton1Click:Connect(function() task.spawn(insertAsset, parseId(idBox.Text)) end)
+idBox.FocusLost:Connect(function(enter) if enter then task.spawn(insertAsset, parseId(idBox.Text)) end end)
 
 -- pencarian (endpoint toolbox Roblox; bisa berubah sewaktu-waktu)
 local cursor, lastKeyword = nil, nil
@@ -130,7 +216,7 @@ local function addResult(id, name)
         TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
     }, list)
     round(b, 6)
-    b.MouseButton1Click:Connect(function() insertAsset(id) end)
+    b.MouseButton1Click:Connect(function() task.spawn(insertAsset, id) end)
 end
 
 local function search(keyword, append)
