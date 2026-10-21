@@ -18,6 +18,32 @@ local BG_ASSET_ID = 102728536712814   -- ID gambar logo BALEREOT COMMUNITY
 local BG_URL = nil            -- atau link langsung (raw) ke file PNG, contoh dari GitHub
 local BG_TRANSPARENCY = 0.6   -- 0 = jelas, 1 = hilang
 
+-- PENGATURAN KEY
+-- =====================================================================
+-- CONTOH PENGISIAN (lihat tanda <<< di bawah)
+--
+-- 1) Cara UTAMA (disarankan): isi KEY_LIST_URL dengan link RAW daftar key.
+--    Menambah / menghapus key cukup edit file daftar itu, skrip ini tidak perlu diubah.
+--      contoh: local KEY_LIST_URL = "https://raw.githubusercontent.com/NAMA/REPO/main/keys.txt"
+--
+-- 2) Cara CADANGAN: tulis key langsung di LOCAL_KEYS (satu key = satu teks dalam kutip, pisah koma).
+--    Format key:  "KEY|USERNAME ROBLOX atau *|TANGGAL (boleh dikosongkan)"
+--      contoh isi LOCAL_KEYS:
+--        "BLR-E9Y8-DTG8-V5SU-TJQB|gahheyhdgdg",            -- khusus user gahheyhdgdg
+--        "BLR-GJKA-UXKJ-7ZED-Z5HE|Budi123|31-12-2026",     -- khusus Budi123 sampai 31 Des 2026 (tgl-bln-thn)
+--        "BLR-V26F-V9E3-MKTP-SS3D|*",                      -- bebas, siapa saja
+--
+-- MENAMBAH KEY  : tambah satu baris baru di LOCAL_KEYS (jangan lupa koma di belakangnya).
+-- MENGHAPUS KEY : hapus baris key-nya dari LOCAL_KEYS (atau dari file daftar online).
+-- =====================================================================
+local KEY_LIST_URL = nil      -- <<< ISI LINK RAW DI SINI (contoh di atas). nil = tidak dipakai
+local LOCAL_KEYS = {          -- <<< DAFTAR KEY CADANGAN / PERCOBAAN
+    "BLR-E9Y8-DTG8-V5SU-TJQB|gahheyhdgdg",   -- <<< key percobaan. HAPUS baris ini kalau sudah selesai tes
+    -- "BLR-GJKA-UXKJ-7ZED-Z5HE|Budi123|2026-12-31",   -- <<< contoh key (hapus tanda -- di depan agar aktif)
+}
+local KEY_FILE = "balereot_key.txt"           -- key tersimpan agar tidak input ulang
+local GET_KEY_LINK = "https://discord.gg/HAkGRPayDn"  -- link untuk tombol GET KEY
+
 local C = {
     bg = Color3.fromRGB(8, 4, 16), panel = Color3.fromRGB(22, 12, 40),
     header = Color3.fromRGB(16, 8, 30), input = Color3.fromRGB(28, 16, 50),
@@ -50,6 +76,153 @@ end
 local function thumb(id, size)
     return ("rbxthumb://type=Asset&id=%d&w=%d&h=%d"):format(id, size, size)
 end
+
+-- =========================================================
+-- KEY SYSTEM
+-- Format baris daftar key:  KEY | USERNAME ROBLOX atau * | TANGGAL KEDALUWARSA (opsional)
+-- Contoh:  BLR-AB12-CD34-EF56-GH78|*|2026-12-31
+-- =========================================================
+local function parseDate(str)
+    -- Terima: 28-10-2026 / 28/10/2026 / 28 10 2026 (tgl-bln-thn) atau 2026-10-28 (thn-bln-tgl)
+    local n1, n2, n3 = tostring(str):match("^%s*(%d+)[%s%-/%.]+(%d+)[%s%-/%.]+(%d+)%s*$")
+    if not n1 then return nil end
+    local y, m, d
+    if #n1 == 4 then y, m, d = n1, n2, n3 else d, m, y = n1, n2, n3 end
+    return os.time({year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 23, min = 59, sec = 59})
+end
+
+local function loadKeyLines()
+    local lines = {}
+    if KEY_LIST_URL then
+        local sep = KEY_LIST_URL:find("?", 1, true) and "&" or "?"
+        local ok, body = pcall(function() return game:HttpGet(KEY_LIST_URL .. sep .. "t=" .. os.time()) end)
+        if ok and type(body) == "string" then
+            body = body:gsub("^\239\187\191", "")
+            for line in body:gmatch("[^\r\n]+") do lines[#lines + 1] = line end
+        end
+    end
+    for _, l in ipairs(LOCAL_KEYS) do lines[#lines + 1] = l end
+    return lines
+end
+
+local function checkKey(input)
+    input = tostring(input or ""):upper():gsub("%s", "")
+    if #input < 8 then return false, "Format key tidak valid" end
+    local lines = loadKeyLines()
+    if #lines == 0 then return false, "Daftar key tidak bisa diakses" end
+    for _, line in ipairs(lines) do
+        if not line:match("^%s*#") then
+            local parts = {}
+            for part in (line .. "|"):gmatch("(.-)|") do parts[#parts + 1] = part:match("^%s*(.-)%s*$") end
+            if parts[1] and parts[1]:upper() == input then
+                local owner = parts[2]
+                if owner and owner ~= "" and owner ~= "*" and owner:lower() ~= player.Name:lower() then
+                    return false, "Key ini terkunci untuk username lain"
+                end
+                local exp = parts[3] and parseDate(parts[3])
+                if exp and os.time() > exp then return false, "Key sudah kedaluwarsa" end
+                return true, "OK"
+            end
+        end
+    end
+    return false, "Key salah"
+end
+
+local function savedKey()
+    if readfile and isfile and isfile(KEY_FILE) then
+        local ok, k = pcall(readfile, KEY_FILE)
+        if ok then return k end
+    end
+end
+local function saveKey(k)
+    if writefile then pcall(writefile, KEY_FILE, k) end
+end
+
+local function requireKey()
+    local saved = savedKey()
+    if saved then
+        local ok = checkKey(saved)
+        if ok then return true end
+    end
+
+    local kgui = new("ScreenGui", {Name = "BalereotKey", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 1000}, nil)
+    local mounted = pcall(function() kgui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+    if not mounted or not kgui.Parent then kgui.Parent = player:WaitForChild("PlayerGui") end
+
+    local box = new("Frame", {
+        Size = UDim2.fromOffset(320, 250), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+        BackgroundColor3 = C.bg, BorderSizePixel = 0, Active = true, Draggable = true, ClipsDescendants = true,
+    }, kgui)
+    round(box, 14)
+    gradient(stroke(box, C.stroke, 2.5), {{0, C.accent}, {0.5, C.cyan}, {1, C.accent}})
+    if BG_ASSET_ID then
+        local img = new("ImageLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ImageTransparency = 0.6, ScaleType = Enum.ScaleType.Crop, ZIndex = 0}, box)
+        round(img, 14)
+        img.Image = thumb(tonumber(BG_ASSET_ID) or 0, 420)
+    end
+    new("TextLabel", {Size = UDim2.new(1, -20, 0, 22), Position = UDim2.fromOffset(10, 14), BackgroundTransparency = 1, Text = "BALEREOT COMMUNITY", Font = Enum.Font.Arcade, TextSize = 16, TextColor3 = C.white}, box)
+    new("TextLabel", {Size = UDim2.new(1, -20, 0, 16), Position = UDim2.fromOffset(10, 38), BackgroundTransparency = 1, Text = "Masukkan key untuk melanjutkan", Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.sub}, box)
+
+    local inputFrame = new("Frame", {Size = UDim2.new(1, -40, 0, 40), Position = UDim2.fromOffset(20, 78), BackgroundColor3 = C.input, BorderSizePixel = 0}, box)
+    round(inputFrame, 8)
+    stroke(inputFrame, C.stroke, 1.2, 0.3)
+    local keyBox = new("TextBox", {
+        Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(8, 0), BackgroundTransparency = 1, Text = "",
+        PlaceholderText = "BLR-XXXX-XXXX-XXXX-XXXX", TextColor3 = C.text, PlaceholderColor3 = C.dim,
+        Font = Enum.Font.Code, TextSize = 12, ClearTextOnFocus = false,
+    }, inputFrame)
+
+    local status = new("TextLabel", {Size = UDim2.new(1, -40, 0, 16), Position = UDim2.fromOffset(20, 124), BackgroundTransparency = 1, Text = "", Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.sub}, box)
+
+    local function makeBtn(text, y, color)
+        local b = new("TextButton", {Size = UDim2.new(1, -40, 0, 36), Position = UDim2.fromOffset(20, y), BackgroundColor3 = color, Text = text, TextColor3 = C.white, Font = Enum.Font.GothamBold, TextSize = 12, BorderSizePixel = 0}, box)
+        round(b, 8)
+        return b
+    end
+    local checkBtn = makeBtn("CHECK KEY", 146, C.accent)
+    local getBtn = makeBtn("GET KEY", 190, C.input)
+
+    local result, attempts = nil, 0
+    local function submit()
+        if result ~= nil then return end
+        checkBtn.Text = "..."
+        local ok, msg = checkKey(keyBox.Text)
+        checkBtn.Text = "CHECK KEY"
+        if ok then
+            saveKey(keyBox.Text:upper():gsub("%s", ""))
+            status.TextColor3 = C.green
+            status.Text = "Key valid! Memuat toolbox..."
+            task.wait(0.6)
+            result = true
+        else
+            attempts += 1
+            status.TextColor3 = C.red
+            status.Text = msg .. " (" .. attempts .. "/5)"
+            if attempts >= 5 then
+                task.wait(1)
+                result = false
+            end
+        end
+    end
+    checkBtn.MouseButton1Click:Connect(function() task.spawn(submit) end)
+    keyBox.FocusLost:Connect(function(enter) if enter then task.spawn(submit) end end)
+    getBtn.MouseButton1Click:Connect(function()
+        if setclipboard then
+            pcall(setclipboard, GET_KEY_LINK)
+            status.TextColor3 = C.green
+            status.Text = "Link disalin ke clipboard"
+        else
+            status.TextColor3 = C.yellow
+            status.Text = GET_KEY_LINK
+        end
+    end)
+
+    repeat task.wait(0.1) until result ~= nil
+    kgui:Destroy()
+    return result
+end
+
+if not requireKey() then return end
 
 -- ScreenGui
 local gui = new("ScreenGui", {
