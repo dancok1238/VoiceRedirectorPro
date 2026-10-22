@@ -520,10 +520,21 @@ local function attachSources(objs, folder, parsed)
                     if setscriptable then setscriptable(inst, "Source", true) end
                     inst.Source = sc.source
                 end)
-                local sv = Instance.new("StringValue")
-                sv.Name = "SourceCode"
-                sv.Value = sc.source
-                sv.Parent = inst
+                -- isi script disimpan langsung di dalam script (format editor Studio Lite)
+                local text = #sc.source > 150000 and sc.source:sub(1, 150000) or sc.source
+                local function mkBox(boxName)
+                    local oldBox = inst:FindFirstChild(boxName)
+                    if oldBox then oldBox:Destroy() end
+                    local tb = Instance.new("TextBox")
+                    tb.Name = boxName
+                    tb.MultiLine = true
+                    tb.ClearTextOnFocus = false
+                    tb.Visible = false
+                    tb.Text = text
+                    tb.Parent = inst
+                end
+                mkBox("SL_CodeTextBox")
+                if inst.ClassName == "ModuleScript" then mkBox("SL_1ReadOnly") end
                 env.ImportedSources[folder.Name .. "/" .. sc.path] = sc.source
                 registerScript(sc.path, sc.class, sc.source)
             end
