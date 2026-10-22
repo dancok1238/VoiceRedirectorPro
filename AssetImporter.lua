@@ -1,10 +1,11 @@
 --[[
-    ASSET IMPORTER  |  Premium Edition (Obsidian Gold)
-    - Scan file .rbxm / .rbxmx / .rbxl / .rbxlx dari folder workspace executor
-    - Import ke Folder baru di Workspace + isi script terbaca (editor Studio Lite)
-    - .rbxl/.rbxlx: kalau GetObjects kosong, struktur + script dibangun ulang dari isi file
-    - Tombol bulat kecil untuk buka / tutup panel (bisa digeser)
-    Taruh file asset di: workspace/ImporterAssets (dibuat otomatis)
+    ASSET IMPORTER v3  |  Aurora Edition
+    - Scan .rbxm / .rbxmx / .rbxl / .rbxlx dari workspace executor
+    - Import ke Folder baru di Workspace (model, tool, part, script)
+    - Mode utama : GetObjects / LoadLocalAsset
+    - Mode cadangan "Rebuild": membaca isi file sendiri (struktur, part, properti, script)
+      dipakai otomatis kalau GetObjects kosong / tidak lengkap (mis. .rbxl, Tool)
+    Taruh file di: workspace/ImporterAssets (dibuat otomatis)
 ]]
 
 local Players = game:GetService("Players")
@@ -13,13 +14,12 @@ local UIS = game:GetService("UserInputService")
 local lp = Players.LocalPlayer
 
 local ASSET_FOLDER = "ImporterAssets"
-local SCAN_FOLDERS = { ASSET_FOLDER, "" } -- "" = root workspace executor
+local SCAN_FOLDERS = { ASSET_FOLDER, "" }
 
 local ICON = {
     PACKAGE = "rbxassetid://128864012857079",
     FOLDER = "rbxassetid://88761476236687",
     SETTINGS = "rbxassetid://11956055886",
-    DASHBOARD = "rbxassetid://90838150633173",
     FILE = "rbxassetid://17109896197",
     GAMEPAD = "rbxassetid://115836418226834",
     REFRESH = "rbxassetid://13492317101",
@@ -27,23 +27,21 @@ local ICON = {
     ALERT = "rbxassetid://7634887649",
 }
 
--- Obsidian + Gold
 local C = {
-    bg = Color3.fromRGB(8, 8, 10),
-    panel = Color3.fromRGB(14, 13, 16),
-    card = Color3.fromRGB(19, 18, 22),
-    card2 = Color3.fromRGB(30, 28, 33),
-    border = Color3.fromRGB(78, 64, 36),
-    accent = Color3.fromRGB(205, 165, 82),
-    accent2 = Color3.fromRGB(248, 222, 150),
-    accentDark = Color3.fromRGB(150, 110, 45),
-    text = Color3.fromRGB(248, 244, 234),
-    muted = Color3.fromRGB(152, 146, 132),
-    ink = Color3.fromRGB(26, 19, 8),
-    ok = Color3.fromRGB(96, 214, 144),
-    err = Color3.fromRGB(240, 84, 100),
+    surface = Color3.fromRGB(15, 19, 33),
+    surface2 = Color3.fromRGB(24, 30, 52),
+    line = Color3.fromRGB(46, 56, 92),
+    a1 = Color3.fromRGB(70, 214, 255),
+    a2 = Color3.fromRGB(150, 120, 255),
+    text = Color3.fromRGB(236, 242, 255),
+    muted = Color3.fromRGB(126, 140, 172),
+    ink = Color3.fromRGB(7, 10, 24),
+    ok = Color3.fromRGB(82, 232, 164),
+    err = Color3.fromRGB(255, 92, 112),
 }
 local WHITE = Color3.new(1, 1, 1)
+
+local settings = { anchor = true, force = false }
 
 -- ============ Helper UI ============
 local function new(class, props, parent)
@@ -55,12 +53,17 @@ end
 local function corner(p, r) return new("UICorner", {CornerRadius = UDim.new(0, r or 8)}, p) end
 local function stroke(p, col, tr, th)
     return new("UIStroke", {
-        Color = col or C.border, Transparency = tr or 0.5, Thickness = th or 1,
+        Color = col or C.line, Transparency = tr or 0.5, Thickness = th or 1,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
     }, p)
 end
 local function gradient(p, c0, c1, rot)
     return new("UIGradient", {Color = ColorSequence.new(c0, c1), Rotation = rot or 0}, p)
+end
+local function gradient3(p, c0, c1, c2, rot)
+    return new("UIGradient", {Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, c0), ColorSequenceKeypoint.new(0.5, c1), ColorSequenceKeypoint.new(1, c2),
+    }), Rotation = rot or 0}, p)
 end
 local function label(p, text, size, pos, sz, col, font)
     return new("TextLabel", {
@@ -73,29 +76,36 @@ end
 local function tween(o, t, props)
     TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
 end
+local function spin(g, t)
+    task.spawn(function()
+        while g.Parent do
+            g.Rotation = 0
+            TweenService:Create(g, TweenInfo.new(t, Enum.EasingStyle.Linear), {Rotation = 360}):Play()
+            task.wait(t)
+        end
+    end)
+end
 
--- Tombol emas premium. Teks dipisah (label) supaya tidak ikut ter-gradient.
--- return: button, textLabel
-local function primaryButton(parent, text, pos, size)
+-- Tombol gradien. Teks dipisah (label) supaya tidak ikut ter-gradient.
+local function gradButton(parent, text, pos, size, textSize)
     local b = new("TextButton", {
         Position = pos, Size = size, BackgroundColor3 = WHITE, Text = "",
-        AutoButtonColor = false, ClipsDescendants = true,
+        AutoButtonColor = false, ClipsDescendants = true, BorderSizePixel = 0,
     }, parent)
-    corner(b, 10)
-    gradient(b, C.accent2, C.accentDark, 90)
-    local st = stroke(b, C.accent2, 0.35, 1)
-    -- kilau tipis di atas tombol
+    corner(b, 9)
+    gradient(b, C.a1, C.a2, 0)
+    local st = stroke(b, WHITE, 0.75, 1)
     local shine = new("Frame", {
-        Size = UDim2.new(1, 0, 0.5, 0), BackgroundColor3 = WHITE, BackgroundTransparency = 0.85,
+        Size = UDim2.new(1, 0, 0.5, 0), BackgroundColor3 = WHITE, BackgroundTransparency = 0.82,
         BorderSizePixel = 0, ZIndex = 2,
     }, b)
-    corner(shine, 10)
+    corner(shine, 9)
     local lb = new("TextLabel", {
         Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = text,
-        Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.ink, ZIndex = 3,
+        Font = Enum.Font.GothamBold, TextSize = textSize or 11, TextColor3 = C.ink, ZIndex = 3,
     }, b)
-    b.MouseEnter:Connect(function() tween(st, 0.15, {Transparency = 0}) tween(shine, 0.15, {BackgroundTransparency = 0.7}) end)
-    b.MouseLeave:Connect(function() tween(st, 0.15, {Transparency = 0.35}) tween(shine, 0.15, {BackgroundTransparency = 0.85}) end)
+    b.MouseEnter:Connect(function() tween(st, 0.15, {Transparency = 0.2}); tween(shine, 0.15, {BackgroundTransparency = 0.65}) end)
+    b.MouseLeave:Connect(function() tween(st, 0.15, {Transparency = 0.75}); tween(shine, 0.15, {BackgroundTransparency = 0.82}) end)
     return b, lb
 end
 
@@ -144,38 +154,40 @@ local gui = new("ScreenGui", {
 local function notify(title, msg, isErr)
     local col = isErr and C.err or C.ok
     local f = new("Frame", {
-        Size = UDim2.fromOffset(290, 62), AnchorPoint = Vector2.new(1, 1),
-        Position = UDim2.new(1, 330, 1, -20), BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 50,
+        Size = UDim2.fromOffset(320, 60), AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, -80), BackgroundColor3 = C.surface, BorderSizePixel = 0, ZIndex = 60,
     }, gui)
-    corner(f, 12); stroke(f, col, 0.35, 1.2)
-    gradient(f, C.card2, C.card, 135)
-    local bar = new("Frame", {Size = UDim2.new(0, 3, 1, -20), Position = UDim2.fromOffset(8, 10), BackgroundColor3 = col, BorderSizePixel = 0}, f)
+    corner(f, 14)
+    stroke(f, col, 0.3, 1.2)
+    gradient(f, C.surface2, C.surface, 90)
+    local bar = new("Frame", {Size = UDim2.new(0, 3, 1, -20), Position = UDim2.fromOffset(9, 10), BackgroundColor3 = col, BorderSizePixel = 0}, f)
     corner(bar, 2)
     new("ImageLabel", {
-        Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(20, 22), BackgroundTransparency = 1,
+        Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(22, 21), BackgroundTransparency = 1,
         Image = isErr and ICON.ALERT or ICON.CHECK, ImageColor3 = col,
     }, f)
-    label(f, title, 12, UDim2.fromOffset(48, 9), UDim2.new(1, -58, 0, 18))
-    local m = label(f, msg, 10, UDim2.fromOffset(48, 28), UDim2.new(1, -58, 0, 28), C.muted, Enum.Font.Gotham)
+    label(f, title, 12, UDim2.fromOffset(50, 8), UDim2.new(1, -60, 0, 16))
+    local m = label(f, msg, 10, UDim2.fromOffset(50, 25), UDim2.new(1, -60, 0, 32), C.muted, Enum.Font.Gotham)
     m.TextWrapped = true; m.TextYAlignment = Enum.TextYAlignment.Top
-    tween(f, 0.4, {Position = UDim2.new(1, -16, 1, -20)})
-    task.delay(3.6, function()
-        tween(f, 0.3, {Position = UDim2.new(1, 330, 1, -20)})
+    tween(f, 0.4, {Position = UDim2.new(0.5, 0, 0, 14)})
+    task.delay(4.5, function()
+        tween(f, 0.3, {Position = UDim2.new(0.5, 0, 0, -80)})
         task.wait(0.35)
         f:Destroy()
     end)
 end
 
 -- ============ Window ============
+local W, H = 540, 340
 local main = new("Frame", {
-    Size = UDim2.fromOffset(560, 380), AnchorPoint = Vector2.new(0.5, 0.5),
+    Size = UDim2.fromOffset(W, H), AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = WHITE,
     BorderSizePixel = 0, ClipsDescendants = true,
 }, gui)
-corner(main, 16)
-gradient(main, Color3.fromRGB(20, 18, 24), Color3.fromRGB(7, 7, 9), 135)
-local mainStroke = stroke(main, WHITE, 0.15, 1.5)
-gradient(mainStroke, C.accent2, Color3.fromRGB(90, 66, 26), 90)
+corner(main, 18)
+gradient(main, Color3.fromRGB(18, 22, 40), Color3.fromRGB(7, 9, 18), 120)
+local mainStroke = stroke(main, WHITE, 0.2, 1.6)
+spin(gradient3(mainStroke, C.a1, C.a2, C.a1, 0), 7)
 local scale = new("UIScale", {}, main)
 
 local baseScale = 1
@@ -183,7 +195,7 @@ local function fit()
     local cam = workspace.CurrentCamera
     if cam then
         local v = cam.ViewportSize
-        baseScale = math.min(v.X / 600, v.Y / 420, 1)
+        baseScale = math.min(v.X / (W + 60), v.Y / (H + 50), 1)
         if main.Visible then scale.Scale = baseScale end
     end
 end
@@ -206,248 +218,225 @@ local function closeMain()
     task.delay(0.19, function() if not isOpen then main.Visible = false end end)
 end
 
--- ---- Sidebar ----
-local side = new("Frame", {Size = UDim2.new(0, 160, 1, 0), BackgroundColor3 = WHITE, BorderSizePixel = 0}, main)
-gradient(side, Color3.fromRGB(24, 21, 28), Color3.fromRGB(10, 9, 12), 90)
-new("Frame", {
-    Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0),
-    BackgroundColor3 = C.border, BackgroundTransparency = 0.3, BorderSizePixel = 0,
-}, side)
-
-local logo = new("Frame", {Size = UDim2.fromOffset(38, 38), Position = UDim2.fromOffset(14, 16), BackgroundColor3 = WHITE, BorderSizePixel = 0}, side)
-corner(logo, 11)
-gradient(logo, C.accent2, C.accentDark, 45)
-stroke(logo, C.accent2, 0.5, 1)
+-- ---- Title bar ----
+local bar = new("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1}, main)
+local logo = new("Frame", {Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(14, 7), BackgroundColor3 = WHITE, BorderSizePixel = 0}, bar)
+corner(logo, 10)
+gradient(logo, C.a1, C.a2, 45)
 new("ImageLabel", {
-    Size = UDim2.fromOffset(22, 22), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = C.ink,
+    Size = UDim2.fromOffset(20, 20), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = WHITE,
 }, logo)
-label(side, "ASSET IMPORTER", 12, UDim2.fromOffset(62, 17), UDim2.new(1, -66, 0, 16))
-label(side, "PREMIUM EDITION", 8, UDim2.fromOffset(62, 35), UDim2.new(1, -66, 0, 12), C.accent2)
-
--- ---- Header ----
-local header = new("Frame", {Size = UDim2.new(1, -160, 0, 56), Position = UDim2.fromOffset(160, 0), BackgroundTransparency = 1}, main)
-local titleLbl = label(header, "", 17, UDim2.fromOffset(20, 10), UDim2.new(1, -70, 0, 22))
-local subLbl = label(header, "", 10, UDim2.fromOffset(20, 33), UDim2.new(1, -70, 0, 14), C.muted, Enum.Font.Gotham)
-local hline = new("Frame", {
-    Size = UDim2.new(1, -40, 0, 1), Position = UDim2.new(0, 20, 1, -1),
-    BackgroundColor3 = WHITE, BackgroundTransparency = 0.3, BorderSizePixel = 0,
-}, header)
-new("UIGradient", {
-    Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C.accent), ColorSequenceKeypoint.new(1, C.bg),
-    }),
-}, hline)
+label(bar, "ASSET IMPORTER", 13, UDim2.fromOffset(52, 7), UDim2.fromOffset(200, 16))
+label(bar, "Model  |  Place  |  Script", 9, UDim2.fromOffset(52, 24), UDim2.fromOffset(200, 12), C.muted, Enum.Font.Gotham)
 
 local closeBtn = new("TextButton", {
-    Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -42, 0, 14), BackgroundColor3 = C.card2,
+    Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -42, 0, 8), BackgroundColor3 = C.surface2,
     Text = "X", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, AutoButtonColor = false, ZIndex = 5,
-}, header)
-corner(closeBtn, 14); stroke(closeBtn, C.border, 0.3)
+}, bar)
+corner(closeBtn, 14); stroke(closeBtn, C.line, 0.3)
 closeBtn.MouseEnter:Connect(function() tween(closeBtn, 0.15, {BackgroundColor3 = C.err}) end)
-closeBtn.MouseLeave:Connect(function() tween(closeBtn, 0.15, {BackgroundColor3 = C.card2}) end)
+closeBtn.MouseLeave:Connect(function() tween(closeBtn, 0.15, {BackgroundColor3 = C.surface2}) end)
 closeBtn.MouseButton1Click:Connect(closeMain)
+makeDraggable(bar, main)
 
-makeDraggable(header, main)
-makeDraggable(side, main)
+local divider = new("Frame", {Size = UDim2.new(1, -28, 0, 1), Position = UDim2.fromOffset(14, 44), BackgroundColor3 = WHITE, BorderSizePixel = 0}, main)
+gradient3(divider, C.a1, C.a2, Color3.fromRGB(18, 22, 40), 0)
 
-local content = new("Frame", {
-    Size = UDim2.new(1, -160, 1, -56), Position = UDim2.fromOffset(160, 56),
-    BackgroundTransparency = 1, ClipsDescendants = true,
-}, main)
+-- ---- Tabs + stat chips ----
+local tabs, views = {}, {}
+local function showTab(name)
+    for n, v in pairs(views) do v.Visible = (n == name) end
+    for n, t in pairs(tabs) do
+        local on = (n == name)
+        tween(t.btn, 0.2, {BackgroundTransparency = on and 0 or 1})
+        tween(t.lbl, 0.2, {TextColor3 = on and C.ink or C.muted})
+    end
+end
+local function tabButton(name, idx)
+    local b = new("TextButton", {
+        Size = UDim2.fromOffset(78, 28), Position = UDim2.fromOffset(14 + (idx - 1) * 84, 50),
+        BackgroundColor3 = WHITE, BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+    }, main)
+    corner(b, 14)
+    gradient(b, C.a1, C.a2, 0)
+    local lb = new("TextLabel", {
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = name,
+        Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.muted,
+    }, b)
+    tabs[name] = {btn = b, lbl = lb}
+    b.MouseButton1Click:Connect(function() showTab(name) end)
+end
+tabButton("Library", 1)
+tabButton("Scripts", 2)
+tabButton("Settings", 3)
 
--- ============ Views & Nav ============
-local views, navs = {}, {}
-local viewInfo = {
-    Overview = {"Overview", "Ringkasan akun dan statistik asset"},
-    Assets = {"Assets", "Pilih file lalu tekan IMPORT"},
-    Scripts = {"Script Viewer", "Isi script dari file yang di-import"},
-    Settings = {"Settings", "Tentang dan pengaturan"},
-}
-
-local function makeView(name)
-    local v = new("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false}, content)
-    new("UIPadding", {PaddingLeft = UDim.new(0, 20), PaddingRight = UDim.new(0, 20), PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14)}, v)
-    views[name] = v
+local function chip(idx, title)
+    local f = new("Frame", {
+        Size = UDim2.fromOffset(76, 24), Position = UDim2.fromOffset(W - 14 - 240 + (idx - 1) * 82, 52),
+        BackgroundColor3 = C.surface, BorderSizePixel = 0,
+    }, main)
+    corner(f, 12); stroke(f, C.line, 0.4)
+    label(f, title, 8, UDim2.fromOffset(9, 0), UDim2.new(0, 44, 1, 0), C.muted)
+    local v = label(f, "0", 11, UDim2.new(0, 44, 0, 0), UDim2.new(1, -53, 1, 0), C.a1)
+    v.TextXAlignment = Enum.TextXAlignment.Right
     return v
 end
+local statFiles = chip(1, "FILES")
+local statImported = chip(2, "IMPORT")
+local statScripts = chip(3, "SCRIPT")
+local importedTotal, scriptTotal = 0, 0
 
-local function showView(name)
-    for n, v in pairs(views) do v.Visible = (n == name) end
-    for n, nv in pairs(navs) do
-        local on = (n == name)
-        tween(nv.btn, 0.2, {BackgroundTransparency = on and 0.05 or 1})
-        tween(nv.bar, 0.2, {Size = UDim2.fromOffset(3, on and 18 or 0)})
-        tween(nv.icon, 0.2, {ImageColor3 = on and C.accent2 or C.muted})
-        tween(nv.label, 0.2, {TextColor3 = on and C.text or C.muted})
-    end
-    titleLbl.Text = viewInfo[name][1]
-    subLbl.Text = viewInfo[name][2]
-end
-
-local function navButton(name, icon, order)
-    local b = new("TextButton", {
-        Size = UDim2.new(1, -24, 0, 38), Position = UDim2.fromOffset(12, 74 + (order - 1) * 44),
-        BackgroundColor3 = C.card2, BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
-    }, side)
-    corner(b, 10)
-    local bar = new("Frame", {
-        Size = UDim2.fromOffset(3, 0), Position = UDim2.new(0, 0, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = C.accent2, BorderSizePixel = 0,
-    }, b)
-    corner(bar, 2)
-    local ic = new("ImageLabel", {
-        Size = UDim2.fromOffset(16, 16), Position = UDim2.new(0, 14, 0.5, -8),
-        BackgroundTransparency = 1, Image = icon, ImageColor3 = C.muted,
-    }, b)
-    local lb = label(b, name, 12, UDim2.fromOffset(40, 0), UDim2.new(1, -44, 1, 0), C.muted, Enum.Font.GothamMedium)
-    navs[name] = {btn = b, bar = bar, icon = ic, label = lb}
-    b.MouseButton1Click:Connect(function() showView(name) end)
-end
-navButton("Overview", ICON.DASHBOARD, 1)
-navButton("Assets", ICON.FOLDER, 2)
-navButton("Scripts", ICON.FILE, 3)
-navButton("Settings", ICON.SETTINGS, 4)
-
--- footer sidebar
+-- ---- Footer (status + progress) ----
 local execName = "Executor"
 pcall(function()
     if identifyexecutor then execName = tostring((identifyexecutor())) end
 end)
-local foot = new("Frame", {Size = UDim2.new(1, -24, 0, 36), Position = UDim2.new(0, 12, 1, -48), BackgroundColor3 = C.card, BorderSizePixel = 0}, side)
-corner(foot, 10); stroke(foot, C.border, 0.4)
-local dot = new("Frame", {Size = UDim2.fromOffset(8, 8), Position = UDim2.new(0, 12, 0.5, -4), BackgroundColor3 = C.ok, BorderSizePixel = 0}, foot)
-corner(dot, 4)
-local fl = label(foot, "Ready  |  " .. execName, 10, UDim2.fromOffset(28, 0), UDim2.new(1, -34, 1, 0), C.muted, Enum.Font.GothamMedium)
-fl.TextTruncate = Enum.TextTruncate.AtEnd
+local readyText = "Siap  |  " .. execName
+local statusLbl = label(main, readyText, 10, UDim2.fromOffset(14, H - 30), UDim2.new(1, -100, 0, 14), C.muted, Enum.Font.GothamMedium)
+statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
+local pctLbl = label(main, "", 10, UDim2.new(1, -74, 0, H - 30), UDim2.fromOffset(60, 14), C.a1)
+pctLbl.TextXAlignment = Enum.TextXAlignment.Right
+local progTrack = new("Frame", {Size = UDim2.new(1, -28, 0, 4), Position = UDim2.fromOffset(14, H - 13), BackgroundColor3 = C.surface2, BorderSizePixel = 0}, main)
+corner(progTrack, 2)
+local progFill = new("Frame", {Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = WHITE, BorderSizePixel = 0}, progTrack)
+corner(progFill, 2)
+gradient(progFill, C.a1, C.a2, 0)
 
--- ---- Overview ----
-local ov = makeView("Overview")
-local prof = new("Frame", {Size = UDim2.new(1, 0, 0, 88), BackgroundColor3 = WHITE, BorderSizePixel = 0}, ov)
-corner(prof, 14)
-gradient(prof, Color3.fromRGB(44, 36, 22), Color3.fromRGB(18, 16, 20), 45)
-stroke(prof, C.accent, 0.4, 1.2)
-local avatarWrap = new("Frame", {Size = UDim2.fromOffset(58, 58), Position = UDim2.fromOffset(16, 15), BackgroundColor3 = C.card, BorderSizePixel = 0}, prof)
-corner(avatarWrap, 29); stroke(avatarWrap, C.accent2, 0.1, 2)
-local avatar = new("ImageLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"}, avatarWrap)
-corner(avatar, 29)
-task.spawn(function()
-    local ok, img = pcall(function()
-        return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
-    end)
-    if ok and img then avatar.Image = img end
-end)
-local nm = label(prof, lp.DisplayName, 15, UDim2.fromOffset(86, 16), UDim2.new(1, -100, 0, 20))
-nm.TextTruncate = Enum.TextTruncate.AtEnd
-local un = label(prof, "@" .. lp.Name .. "   |   ID " .. lp.UserId, 10, UDim2.fromOffset(86, 38), UDim2.new(1, -100, 0, 14), C.muted, Enum.Font.Gotham)
-un.TextTruncate = Enum.TextTruncate.AtEnd
-local pill = new("Frame", {Size = UDim2.fromOffset(74, 16), Position = UDim2.fromOffset(86, 58), BackgroundColor3 = WHITE, BorderSizePixel = 0}, prof)
-corner(pill, 8)
-gradient(pill, C.accent2, C.accentDark, 0)
-new("TextLabel", {
-    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "PREMIUM", Font = Enum.Font.GothamBold,
-    TextSize = 9, TextColor3 = C.ink,
-}, pill)
-
-local function statCard(idx, title)
-    local f = new("Frame", {
-        Size = UDim2.new(1 / 3, -8, 0, 66), Position = UDim2.new((idx - 1) / 3, (idx - 1) * 4, 0, 100),
-        BackgroundColor3 = WHITE, BorderSizePixel = 0,
-    }, ov)
-    corner(f, 12); stroke(f, C.border, 0.35)
-    gradient(f, C.card2, C.card, 135)
-    label(f, title, 9, UDim2.fromOffset(12, 10), UDim2.new(1, -24, 0, 12), C.muted)
-    return label(f, "0", 22, UDim2.fromOffset(12, 28), UDim2.new(1, -24, 0, 28), C.accent2)
+local function setProg(frac, text)
+    if text then statusLbl.Text = text end
+    frac = math.clamp(frac or 0, 0, 1)
+    tween(progFill, 0.15, {Size = UDim2.new(frac, 0, 1, 0)})
+    pctLbl.Text = (frac > 0) and (math.floor(frac * 100) .. "%") or ""
 end
-local statAssets = statCard(1, "TOTAL ASSETS")
-local statImported = statCard(2, "DI-IMPORT")
-local statScripts = statCard(3, "SCRIPT TERBACA")
+local function resetProg()
+    setProg(0, readyText)
+end
 
-local tip = new("Frame", {Size = UDim2.new(1, 0, 0, 58), Position = UDim2.fromOffset(0, 178), BackgroundColor3 = C.card, BorderSizePixel = 0}, ov)
-corner(tip, 12); stroke(tip, C.border, 0.4)
-new("ImageLabel", {Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(14, 20), BackgroundTransparency = 1, Image = ICON.FOLDER, ImageColor3 = C.accent2}, tip)
-local tl = label(tip, "Letakkan file .rbxm / .rbxl di folder workspace/" .. ASSET_FOLDER .. " lalu buka tab Assets.", 10, UDim2.fromOffset(44, 8), UDim2.new(1, -56, 0, 42), C.muted, Enum.Font.Gotham)
-tl.TextWrapped = true
+-- ---- Body ----
+local function makeView(name)
+    local v = new("Frame", {
+        Size = UDim2.new(1, -28, 0, H - 82 - 34), Position = UDim2.fromOffset(14, 82),
+        BackgroundTransparency = 1, Visible = false,
+    }, main)
+    views[name] = v
+    return v
+end
+local BW, BH = W - 28, H - 82 - 34 -- 512 x 224
 
-local importedTotal, scriptTotal = 0, 0
-
--- ---- Assets ----
-local av = makeView("Assets")
+-- ===== Library =====
+local lib = makeView("Library")
 local rows, filterKind, searchText = {}, "ALL", ""
-local function applyFilter()
-    for _, r in ipairs(rows) do
-        local okKind = (filterKind == "ALL") or (r.kind == filterKind)
-        local okSearch = (searchText == "") or (r.name:lower():find(searchText, 1, true) ~= nil)
-        r.frame.Visible = okKind and okSearch
-    end
-end
 
-local seg = new("Frame", {Size = UDim2.fromOffset(190, 30), BackgroundColor3 = C.card, BorderSizePixel = 0}, av)
-corner(seg, 15); stroke(seg, C.border, 0.4)
+local searchBox = new("TextBox", {
+    Size = UDim2.fromOffset(BW - 150 - 30 - 16, 30), Position = UDim2.fromOffset(0, 0), BackgroundColor3 = C.surface,
+    Text = "", PlaceholderText = "Cari asset...", PlaceholderColor3 = C.muted, TextColor3 = C.text,
+    Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
+}, lib)
+corner(searchBox, 15); stroke(searchBox, C.line, 0.4)
+new("UIPadding", {PaddingLeft = UDim.new(0, 14)}, searchBox)
+
+local seg = new("Frame", {Size = UDim2.fromOffset(150, 30), Position = UDim2.fromOffset(BW - 150 - 30 - 8, 0), BackgroundColor3 = C.surface, BorderSizePixel = 0}, lib)
+corner(seg, 15); stroke(seg, C.line, 0.4)
 local segBtns = {}
 for i, nmk in ipairs({"ALL", "MODEL", "PLACE"}) do
     local b = new("TextButton", {
-        Size = UDim2.fromOffset(60, 26), Position = UDim2.fromOffset(2 + (i - 1) * 62, 2),
-        BackgroundColor3 = C.accent, BackgroundTransparency = (i == 1) and 0 or 1,
-        Text = nmk, Font = Enum.Font.GothamBold, TextSize = 10,
-        TextColor3 = (i == 1) and C.ink or C.text, AutoButtonColor = false,
+        Size = UDim2.fromOffset(46, 24), Position = UDim2.fromOffset(3 + (i - 1) * 48, 3),
+        BackgroundColor3 = WHITE, BackgroundTransparency = (i == 1) and 0 or 1, Text = "", AutoButtonColor = false,
     }, seg)
-    corner(b, 13)
-    segBtns[nmk] = b
-    b.MouseButton1Click:Connect(function()
+    corner(b, 12)
+    gradient(b, C.a1, C.a2, 0)
+    local lb = new("TextLabel", {
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = nmk, Font = Enum.Font.GothamBold,
+        TextSize = 9, TextColor3 = (i == 1) and C.ink or C.text,
+    }, b)
+    segBtns[nmk] = {btn = b, lbl = lb}
+end
+
+local rescan = new("TextButton", {
+    Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(BW - 30, 0), BackgroundColor3 = WHITE,
+    Text = "", AutoButtonColor = false,
+}, lib)
+corner(rescan, 15)
+gradient(rescan, C.a1, C.a2, 0)
+local rescanIcon = new("ImageLabel", {
+    Size = UDim2.fromOffset(16, 16), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Image = ICON.REFRESH, ImageColor3 = C.ink,
+}, rescan)
+
+local emptyLbl = new("TextLabel", {
+    Size = UDim2.new(1, 0, 1, -38), Position = UDim2.fromOffset(0, 38), BackgroundTransparency = 1,
+    Text = "", Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextWrapped = true,
+}, lib)
+
+local listFrame = new("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 1, -38), Position = UDim2.fromOffset(0, 38), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.a1,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+}, lib)
+new("UIGridLayout", {
+    CellSize = UDim2.fromOffset(248, 92), CellPadding = UDim2.fromOffset(8, 8),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, listFrame)
+
+local function applyFilter()
+    local vis = 0
+    for _, r in ipairs(rows) do
+        local okK = (filterKind == "ALL") or (r.kind == filterKind)
+        local okS = (searchText == "") or (r.name:lower():find(searchText, 1, true) ~= nil)
+        r.frame.Visible = okK and okS
+        if okK and okS then vis += 1 end
+    end
+    emptyLbl.Visible = (vis == 0)
+    if #rows == 0 then
+        emptyLbl.Text = "Belum ada file.\nLetakkan .rbxm / .rbxl di workspace/" .. ASSET_FOLDER
+    else
+        emptyLbl.Text = "Tidak ada hasil."
+    end
+end
+for nmk, s in pairs(segBtns) do
+    s.btn.MouseButton1Click:Connect(function()
         filterKind = nmk
-        for n2, fb in pairs(segBtns) do
+        for n2, s2 in pairs(segBtns) do
             local on = (n2 == nmk)
-            tween(fb, 0.2, {BackgroundTransparency = on and 0 or 1, TextColor3 = on and C.ink or C.text})
+            tween(s2.btn, 0.2, {BackgroundTransparency = on and 0 or 1})
+            tween(s2.lbl, 0.2, {TextColor3 = on and C.ink or C.text})
         end
         applyFilter()
     end)
 end
-
-local rescan, rescanLbl = primaryButton(av, "RESCAN", UDim2.new(1, -96, 0, 0), UDim2.fromOffset(96, 30))
-local searchBox = new("TextBox", {
-    Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 38), BackgroundColor3 = C.card,
-    Text = "", PlaceholderText = "Cari asset...", PlaceholderColor3 = C.muted, TextColor3 = C.text,
-    Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
-}, av)
-corner(searchBox, 10); stroke(searchBox, C.border, 0.4)
-new("UIPadding", {PaddingLeft = UDim.new(0, 12)}, searchBox)
 searchBox:GetPropertyChangedSignal("Text"):Connect(function()
     searchText = searchBox.Text:lower()
     applyFilter()
 end)
 
-local listFrame = new("ScrollingFrame", {
-    Size = UDim2.new(1, 0, 1, -76), Position = UDim2.fromOffset(0, 76), BackgroundTransparency = 1,
-    BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.accent,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
-}, av)
-new("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, listFrame)
-
--- ---- Scripts ----
+-- ===== Scripts =====
 local scv = makeView("Scripts")
 local scList = new("ScrollingFrame", {
-    Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card, BorderSizePixel = 0,
-    ScrollBarThickness = 3, ScrollBarImageColor3 = C.accent,
+    Size = UDim2.fromOffset(190, BH), BackgroundColor3 = C.surface, BorderSizePixel = 0,
+    ScrollBarThickness = 3, ScrollBarImageColor3 = C.a1,
     AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
 }, scv)
-corner(scList, 10); stroke(scList, C.border, 0.4)
+corner(scList, 12); stroke(scList, C.line, 0.4)
 new("UIPadding", {PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6)}, scList)
 new("UIListLayout", {Padding = UDim.new(0, 4)}, scList)
 
 local codeBox = new("TextBox", {
-    Size = UDim2.new(1, 0, 1, -138), Position = UDim2.fromOffset(0, 100), BackgroundColor3 = Color3.fromRGB(11, 10, 13),
-    Text = "Import file dulu, lalu pilih script di atas.", TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 11,
+    Size = UDim2.fromOffset(314, BH - 38), Position = UDim2.fromOffset(198, 0), BackgroundColor3 = Color3.fromRGB(10, 12, 22),
+    Text = "Import file dulu, lalu pilih script di kiri.", TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 11,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     ClearTextOnFocus = false, TextEditable = false, MultiLine = true, TextWrapped = false, ClipsDescendants = true,
 }, scv)
-corner(codeBox, 10); stroke(codeBox, C.border, 0.4)
-new("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6)}, codeBox)
-local copyBtn = primaryButton(scv, "COPY", UDim2.new(0, 0, 1, -30), UDim2.fromOffset(100, 30))
+corner(codeBox, 12); stroke(codeBox, C.line, 0.4)
+new("UIPadding", {PaddingLeft = UDim.new(0, 10), PaddingTop = UDim.new(0, 8)}, codeBox)
+local pathLbl = label(scv, "", 9, UDim2.fromOffset(198, BH - 28), UDim2.fromOffset(196, 26), C.muted, Enum.Font.Gotham)
+pathLbl.TextTruncate = Enum.TextTruncate.AtEnd
+local copyBtn = gradButton(scv, "COPY", UDim2.fromOffset(198 + 314 - 108, BH - 30), UDim2.fromOffset(108, 28))
 
 local currentSrc = ""
-local function showSource(src)
+local function showSource(path, src)
     currentSrc = src
+    pathLbl.Text = path
     if #src > 20000 then
         codeBox.Text = src:sub(1, 20000) .. "\n-- [dipotong, pakai COPY untuk isi penuh]"
     else
@@ -457,9 +446,9 @@ end
 copyBtn.MouseButton1Click:Connect(function()
     if setclipboard and currentSrc ~= "" then
         pcall(setclipboard, currentSrc)
-        notify("Copied", "Isi script disalin ke clipboard.", false)
+        notify("Tersalin", "Isi script disalin ke clipboard.", false)
     else
-        notify("Failed", "Pilih script dulu / executor tanpa setclipboard.", true)
+        notify("Gagal", "Pilih script dulu / executor tanpa setclipboard.", true)
     end
 end)
 
@@ -467,39 +456,73 @@ local function registerScript(path, class, src)
     scriptTotal += 1
     statScripts.Text = tostring(scriptTotal)
     local b = new("TextButton", {
-        Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = C.card2, Text = "  [" .. class .. "]  " .. path,
+        Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = C.surface2, Text = "  [" .. class:sub(1, 1) .. "]  " .. path,
         Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
         TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false,
     }, scList)
     corner(b, 8)
-    b.MouseEnter:Connect(function() tween(b, 0.12, {BackgroundColor3 = C.border}) end)
-    b.MouseLeave:Connect(function() tween(b, 0.12, {BackgroundColor3 = C.card2}) end)
-    b.MouseButton1Click:Connect(function() showSource(src) end)
+    b.MouseEnter:Connect(function() tween(b, 0.12, {BackgroundColor3 = C.line}) end)
+    b.MouseLeave:Connect(function() tween(b, 0.12, {BackgroundColor3 = C.surface2}) end)
+    b.MouseButton1Click:Connect(function() showSource(path, src) end)
 end
 
--- ---- Settings ----
+-- ===== Settings =====
 local sv = makeView("Settings")
-local about = new("Frame", {Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = WHITE, BorderSizePixel = 0}, sv)
-corner(about, 14)
-gradient(about, Color3.fromRGB(40, 33, 21), Color3.fromRGB(17, 15, 19), 45)
-stroke(about, C.accent, 0.45, 1.2)
-label(about, "Asset Importer  -  Premium Edition", 14, UDim2.fromOffset(16, 14), UDim2.new(1, -32, 0, 20))
-local ab = label(about, "Scan dan import file .rbxm / .rbxl dari folder workspace executor ke Workspace game (lokal / client).", 10, UDim2.fromOffset(16, 38), UDim2.new(1, -32, 0, 44), C.muted, Enum.Font.Gotham)
+local card1 = new("Frame", {Size = UDim2.fromOffset(BW, 112), BackgroundColor3 = C.surface, BorderSizePixel = 0}, sv)
+corner(card1, 14); stroke(card1, C.line, 0.4)
+
+local function toggleRow(y, title, desc, key)
+    label(card1, title, 12, UDim2.fromOffset(16, y), UDim2.new(1, -90, 0, 16))
+    local d = label(card1, desc, 9, UDim2.fromOffset(16, y + 17), UDim2.new(1, -90, 0, 24), C.muted, Enum.Font.Gotham)
+    d.TextWrapped = true; d.TextYAlignment = Enum.TextYAlignment.Top
+    local track = new("TextButton", {
+        Size = UDim2.fromOffset(44, 22), Position = UDim2.new(1, -60, 0, y + 8), BackgroundColor3 = C.surface2,
+        Text = "", AutoButtonColor = false,
+    }, card1)
+    corner(track, 11); stroke(track, C.line, 0.4)
+    local g = gradient(track, C.a1, C.a2, 0)
+    local knob = new("Frame", {Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(3, 3), BackgroundColor3 = WHITE, BorderSizePixel = 0}, track)
+    corner(knob, 8)
+    local function render(v, animate)
+        g.Enabled = v
+        local pos = v and UDim2.fromOffset(25, 3) or UDim2.fromOffset(3, 3)
+        if animate then
+            tween(knob, 0.15, {Position = pos})
+            tween(track, 0.15, {BackgroundColor3 = v and WHITE or C.surface2})
+        else
+            knob.Position = pos
+            track.BackgroundColor3 = v and WHITE or C.surface2
+        end
+    end
+    render(settings[key], false)
+    track.MouseButton1Click:Connect(function()
+        settings[key] = not settings[key]
+        render(settings[key], true)
+    end)
+end
+toggleRow(10, "Anchor semua part", "Mode Rebuild: part dikunci supaya tidak jatuh / berantakan.", "anchor")
+toggleRow(60, "Paksa mode Rebuild", "Lewati GetObjects, selalu baca isi file sendiri.", "force")
+
+local card2 = new("Frame", {Size = UDim2.fromOffset(BW, 100), Position = UDim2.fromOffset(0, 122), BackgroundColor3 = C.surface, BorderSizePixel = 0}, sv)
+corner(card2, 14); stroke(card2, C.line, 0.4)
+label(card2, "Asset Importer v3  -  Aurora Edition", 12, UDim2.fromOffset(16, 12), UDim2.new(1, -32, 0, 16))
+local ab = label(card2, "Import file .rbxm / .rbxl dari folder workspace executor ke Workspace (lokal / client). RightShift untuk buka / tutup panel.", 9, UDim2.fromOffset(16, 32), UDim2.new(1, -150, 0, 46), C.muted, Enum.Font.Gotham)
 ab.TextWrapped = true; ab.TextYAlignment = Enum.TextYAlignment.Top
-local unload = primaryButton(sv, "UNLOAD GUI", UDim2.fromOffset(0, 108), UDim2.fromOffset(120, 32))
+local unload = gradButton(card2, "UNLOAD GUI", UDim2.new(1, -126, 1, -40), UDim2.fromOffset(110, 28))
 unload.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- ============ Tombol kecil buka / tutup panel ============
-local toggle = new("ImageButton", {
+-- ============ Tombol bulat buka / tutup ============
+local toggle = new("TextButton", {
     Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 14, 0, 120), BackgroundColor3 = WHITE,
-    AutoButtonColor = false, Image = "", ZIndex = 20,
+    AutoButtonColor = false, Text = "", ZIndex = 20,
 }, gui)
 corner(toggle, 23)
-gradient(toggle, C.accent2, C.accentDark, 45)
-stroke(toggle, C.accent2, 0.3, 1.5)
+gradient(toggle, C.a1, C.a2, 45)
+local ring = stroke(toggle, WHITE, 0.1, 2)
+spin(gradient3(ring, C.a1, WHITE, C.a2, 0), 5)
 new("ImageLabel", {
-    Size = UDim2.fromOffset(24, 24), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = C.ink, ZIndex = 21,
+    Size = UDim2.fromOffset(26, 26), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = WHITE, ZIndex = 21,
 }, toggle)
 makeDraggable(toggle, toggle, function()
     if isOpen then closeMain() else openMain() end
@@ -511,12 +534,15 @@ UIS.InputBegan:Connect(function(i, gp)
 end)
 
 -- ============ Logic ============
--- ---------- Parser file rbxm/rbxmx/rbxl (baca struktur + isi script) ----------
 local SCRIPT_CLASSES = {Script = true, LocalScript = true, ModuleScript = true}
+local SKIP_CLASSES = {Terrain = true, Camera = true}
 
+local spack, sunpack = string.pack, string.unpack
+local byte = string.byte
+
+-- ---------- LZ4 / ZSTD ----------
 local function lz4block(src)
     local out, o, i, n = {}, 0, 1, #src
-    local byte = string.byte
     while i <= n do
         local token = byte(src, i); i += 1
         local lit = bit32.rshift(token, 4)
@@ -554,21 +580,139 @@ local function decompressChunk(comp, raw)
     return lz4block(raw)
 end
 
-local function readInts(data, pos, n)
-    local res, byte = {}, string.byte
+-- ---------- Pembaca array biner (interleaved) ----------
+local function readRaw(data, pos, n)
+    local res = table.create(n)
     for i = 0, n - 1 do
-        local x = byte(data, pos + i) * 16777216 + byte(data, pos + n + i) * 65536
+        res[i + 1] = byte(data, pos + i) * 16777216 + byte(data, pos + n + i) * 65536
             + byte(data, pos + 2 * n + i) * 256 + byte(data, pos + 3 * n + i)
-        res[i + 1] = (x % 2 == 0) and (x / 2) or (-(x + 1) / 2)
     end
     return res, pos + n * 4
 end
-
+local function readInts(data, pos, n)
+    local res, np = readRaw(data, pos, n)
+    for i = 1, n do
+        local x = res[i]
+        res[i] = (x % 2 == 0) and (x / 2) or (-(x + 1) / 2)
+    end
+    return res, np
+end
 local function readRefs(data, pos, n)
     local ints, np = readInts(data, pos, n)
     local acc = 0
     for i = 1, n do acc += ints[i]; ints[i] = acc end
     return ints, np
+end
+local function decF(x)
+    local bits = bit32.rshift(x, 1) + (x % 2) * 2147483648
+    return (sunpack(">f", spack(">I4", bits)))
+end
+local function readFloats(data, pos, n)
+    local res, np = readRaw(data, pos, n)
+    for i = 1, n do res[i] = decF(res[i]) end
+    return res, np
+end
+
+-- tabel rotasi CFrame (id -> R00,R01,R02,R10,R11,R12,R20,R21,R22)
+local ROT = {
+    [0x02] = {1,0,0, 0,1,0, 0,0,1},   [0x03] = {1,0,0, 0,0,-1, 0,1,0},
+    [0x05] = {1,0,0, 0,-1,0, 0,0,-1}, [0x06] = {1,0,0, 0,0,1, 0,-1,0},
+    [0x07] = {0,1,0, 1,0,0, 0,0,-1},  [0x09] = {0,0,1, 1,0,0, 0,1,0},
+    [0x0A] = {0,-1,0, 1,0,0, 0,0,1},  [0x0C] = {0,0,-1, 1,0,0, 0,-1,0},
+    [0x0D] = {0,1,0, 0,0,1, 1,0,0},   [0x0E] = {0,0,-1, 0,1,0, 1,0,0},
+    [0x10] = {0,-1,0, 0,0,-1, 1,0,0}, [0x11] = {0,0,1, 0,-1,0, 1,0,0},
+    [0x14] = {-1,0,0, 0,1,0, 0,0,-1}, [0x15] = {-1,0,0, 0,0,1, 0,1,0},
+    [0x17] = {-1,0,0, 0,-1,0, 0,0,1}, [0x18] = {-1,0,0, 0,0,-1, 0,-1,0},
+    [0x19] = {0,1,0, -1,0,0, 0,0,1},  [0x1B] = {0,0,-1, -1,0,0, 0,1,0},
+    [0x1C] = {0,-1,0, -1,0,0, 0,0,-1},[0x1E] = {0,0,1, -1,0,0, 0,-1,0},
+    [0x1F] = {0,1,0, 0,0,-1, -1,0,0}, [0x20] = {0,0,1, 0,1,0, -1,0,0},
+    [0x22] = {0,-1,0, 0,0,1, -1,0,0}, [0x23] = {0,0,-1, 0,-1,0, -1,0,0},
+}
+
+-- decode satu chunk PROP (tipe yang didukung). Return tabel nilai 1..n atau nil
+local function decodeProp(ptype, chunk, p, n)
+    local v = table.create(n)
+    if ptype == 1 then
+        for i = 1, n do local s; s, p = sunpack("<s4", chunk, p); v[i] = s end
+    elseif ptype == 2 then
+        for i = 1, n do v[i] = byte(chunk, p + i - 1) ~= 0 end
+    elseif ptype == 3 then
+        v = readInts(chunk, p, n)
+    elseif ptype == 4 then
+        v = readFloats(chunk, p, n)
+    elseif ptype == 5 then
+        for i = 1, n do v[i] = (sunpack("<d", chunk, p)); p += 8 end
+    elseif ptype == 6 then
+        local s, o
+        s, p = readFloats(chunk, p, n); o, p = readInts(chunk, p, n)
+        for i = 1, n do v[i] = UDim.new(s[i], o[i]) end
+    elseif ptype == 7 then
+        local sx, sy, ox, oy
+        sx, p = readFloats(chunk, p, n); sy, p = readFloats(chunk, p, n)
+        ox, p = readInts(chunk, p, n); oy, p = readInts(chunk, p, n)
+        for i = 1, n do v[i] = UDim2.new(sx[i], ox[i], sy[i], oy[i]) end
+    elseif ptype == 11 then
+        local r = readRaw(chunk, p, n)
+        for i = 1, n do
+            local ok, bc = pcall(BrickColor.new, r[i])
+            if ok then v[i] = bc end
+        end
+    elseif ptype == 12 then
+        local r, g, b
+        r, p = readFloats(chunk, p, n); g, p = readFloats(chunk, p, n); b, p = readFloats(chunk, p, n)
+        for i = 1, n do v[i] = Color3.new(r[i], g[i], b[i]) end
+    elseif ptype == 13 then
+        local x, y
+        x, p = readFloats(chunk, p, n); y, p = readFloats(chunk, p, n)
+        for i = 1, n do v[i] = Vector2.new(x[i], y[i]) end
+    elseif ptype == 14 then
+        local x, y, z
+        x, p = readFloats(chunk, p, n); y, p = readFloats(chunk, p, n); z, p = readFloats(chunk, p, n)
+        for i = 1, n do v[i] = Vector3.new(x[i], y[i], z[i]) end
+    elseif ptype == 16 then
+        local rots = {}
+        for i = 1, n do
+            local id = byte(chunk, p); p += 1
+            if id == 0 then
+                local m = {}
+                for k = 1, 9 do m[k] = (sunpack("<f", chunk, p)); p += 4 end
+                rots[i] = m
+            else
+                rots[i] = ROT[id]
+            end
+        end
+        local x, y, z
+        x, p = readFloats(chunk, p, n); y, p = readFloats(chunk, p, n); z, p = readFloats(chunk, p, n)
+        for i = 1, n do
+            local m = rots[i] or ROT[0x02]
+            v[i] = CFrame.new(x[i], y[i], z[i], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9])
+        end
+    elseif ptype == 18 then
+        local r = readRaw(chunk, p, n)
+        for i = 1, n do v[i] = {tok = r[i]} end
+    elseif ptype == 19 then
+        v = readRefs(chunk, p, n)
+    elseif ptype == 23 then
+        for i = 1, n do
+            local a, b = sunpack("<ff", chunk, p); p += 8
+            v[i] = NumberRange.new(a, b)
+        end
+    elseif ptype == 26 then
+        for i = 1, n do
+            v[i] = Color3.fromRGB(byte(chunk, p + i - 1), byte(chunk, p + n + i - 1), byte(chunk, p + 2 * n + i - 1))
+        end
+    elseif ptype == 34 then
+        local types
+        types, p = readRaw(chunk, p, n)
+        for i = 1, n do
+            if types[i] == 1 then
+                local s; s, p = sunpack("<s4", chunk, p); v[i] = s
+            end
+        end
+    else
+        return nil
+    end
+    return v
 end
 
 local function chainPath(insts, inst)
@@ -589,7 +733,7 @@ local function parseBinary(data)
     local chunks = 0
     while pos <= #data do
         local name = data:sub(pos, pos + 3)
-        local comp, unc = string.unpack("<I4I4", data, pos + 4)
+        local comp, unc = sunpack("<I4I4", data, pos + 4)
         pos += 16
         local raw
         if comp == 0 then
@@ -599,14 +743,14 @@ local function parseBinary(data)
         end
         if name == "END\0" then break end
         chunks += 1
-        if chunks % 25 == 0 then task.wait() end
+        if chunks % 20 == 0 then task.wait() end
         if name == "INST" or name == "PROP" or name == "PRNT" then
             local chunk = decompressChunk(comp, raw)
             if name == "INST" then
-                local cid, p = string.unpack("<I4", chunk, 1)
-                local cname; cname, p = string.unpack("<s4", chunk, p)
+                local cid, p = sunpack("<I4", chunk, 1)
+                local cname; cname, p = sunpack("<s4", chunk, p)
                 p += 1
-                local count; count, p = string.unpack("<I4", chunk, p)
+                local count; count, p = sunpack("<I4", chunk, p)
                 local refs = readRefs(chunk, p, count)
                 classes[cid] = {name = cname, refs = refs}
                 for _, r in ipairs(refs) do
@@ -614,21 +758,37 @@ local function parseBinary(data)
                     order[#order + 1] = r
                 end
             elseif name == "PROP" then
-                local cid, p = string.unpack("<I4", chunk, 1)
-                local pname; pname, p = string.unpack("<s4", chunk, p)
-                local ptype = string.byte(chunk, p); p += 1
-                if ptype == 1 and (pname == "Name" or pname == "Source") then
-                    local cls = classes[cid]
-                    if cls then
-                        for _, r in ipairs(cls.refs) do
-                            local str; str, p = string.unpack("<s4", chunk, p)
-                            insts[r][pname == "Name" and "name" or "source"] = str
+                local cid, p = sunpack("<I4", chunk, 1)
+                local pname; pname, p = sunpack("<s4", chunk, p)
+                local ptype = byte(chunk, p); p += 1
+                local cls = classes[cid]
+                if cls then
+                    local okD, vals = pcall(decodeProp, ptype, chunk, p, #cls.refs)
+                    if okD and vals then
+                        for i, r in ipairs(cls.refs) do
+                            local val = vals[i]
+                            local it = insts[r]
+                            if val ~= nil and it then
+                                if pname == "Name" and ptype == 1 then
+                                    it.name = val
+                                elseif pname == "Source" and ptype == 1 then
+                                    it.source = val
+                                elseif ptype == 19 then
+                                    if val >= 0 then
+                                        it.refprops = it.refprops or {}
+                                        it.refprops[pname] = val
+                                    end
+                                else
+                                    it.props = it.props or {}
+                                    it.props[pname] = val
+                                end
+                            end
                         end
                     end
                 end
             else -- PRNT
                 local p = 2
-                local count; count, p = string.unpack("<I4", chunk, p)
+                local count; count, p = sunpack("<I4", chunk, p)
                 local kids; kids, p = readRefs(chunk, p, count)
                 local pars = readRefs(chunk, p, count)
                 for i = 1, count do
@@ -648,64 +808,128 @@ local function parseBinary(data)
     return list, {insts = insts, order = order}
 end
 
+-- ---------- Parser XML (rbxmx / rbxlx) ----------
 local function unesc(str)
     return (str:gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&quot;", '"'):gsub("&apos;", "'"):gsub("&amp;", "&"))
 end
+local function xmlStr(inner)
+    return inner:match("^%s*<!%[CDATA%[(.*)%]%]>%s*$") or unesc(inner)
+end
+local function xn(inner, tag) return tonumber(inner:match("<" .. tag .. ">%s*(.-)%s*</" .. tag .. ">")) or 0 end
+local function c3u(n)
+    n = n or 0
+    return Color3.fromRGB(bit32.band(bit32.rshift(n, 16), 255), bit32.band(bit32.rshift(n, 8), 255), bit32.band(n, 255))
+end
 
--- return: list script, tree {insts, order}  (dibangun dari XML)
-local function parseXml(data)
-    local list, stack, pos = {}, {}, 1
-    local insts, order = {}, {}
-    local idc = 0
-    local pats = {
-        open = '<Item class="([^"]+)"',
-        close = "</Item>",
-        name = '<string name="Name">(.-)</string>',
-        src = '<ProtectedString name="Source">(.-)</ProtectedString>',
-    }
-    local cache = {}
-    local steps = 0
-    while true do
-        local best, bs, be, cap
-        for k, pat in pairs(pats) do
-            local c = cache[k]
-            if c == nil or (c ~= false and c.s < pos) then
-                local s, e, c1 = data:find(pat, pos)
-                c = s and {s = s, e = e, cap = c1} or false
-                cache[k] = c
-            end
-            if c and (not best or c.s < bs) then best, bs, be, cap = k, c.s, c.e, c.cap end
+local function applyXmlProp(node, tag, pname, inner)
+    if not pname then return end
+    node.props = node.props or {}
+    local props = node.props
+    if tag == "string" or tag == "ProtectedString" then
+        local v = xmlStr(inner)
+        if pname == "Name" then node.name = v
+        elseif pname == "Source" then node.source = v
+        else props[pname] = v end
+    elseif tag == "bool" then
+        props[pname] = inner:find("true", 1, true) ~= nil
+    elseif tag == "int" or tag == "float" or tag == "double" or tag == "int64" then
+        local n = tonumber(inner)
+        if n then props[pname] = n end
+    elseif tag == "token" then
+        local n = tonumber(inner)
+        if n then props[pname] = {tok = n} end
+    elseif tag == "Color3uint8" then
+        props[pname] = c3u(tonumber(inner))
+    elseif tag == "Color3" then
+        if inner:find("<R>", 1, true) then
+            props[pname] = Color3.new(xn(inner, "R"), xn(inner, "G"), xn(inner, "B"))
+        else
+            props[pname] = c3u(tonumber(inner))
         end
-        if not best then break end
-        pos = be + 1
+    elseif tag == "Vector3" then
+        props[pname] = Vector3.new(xn(inner, "X"), xn(inner, "Y"), xn(inner, "Z"))
+    elseif tag == "Vector2" then
+        props[pname] = Vector2.new(xn(inner, "X"), xn(inner, "Y"))
+    elseif tag == "CoordinateFrame" then
+        props[pname] = CFrame.new(xn(inner, "X"), xn(inner, "Y"), xn(inner, "Z"),
+            xn(inner, "R00"), xn(inner, "R01"), xn(inner, "R02"),
+            xn(inner, "R10"), xn(inner, "R11"), xn(inner, "R12"),
+            xn(inner, "R20"), xn(inner, "R21"), xn(inner, "R22"))
+    elseif tag == "UDim2" then
+        props[pname] = UDim2.new(xn(inner, "XS"), xn(inner, "XO"), xn(inner, "YS"), xn(inner, "YO"))
+    elseif tag == "UDim" then
+        props[pname] = UDim.new(xn(inner, "S"), xn(inner, "O"))
+    elseif tag == "BrickColor" then
+        local ok, bc = pcall(BrickColor.new, tonumber(inner) or 194)
+        if ok then props[pname] = bc end
+    elseif tag == "Content" then
+        local url = inner:match("<url>(.-)</url>")
+        if url and url ~= "" then props[pname] = unesc(url) end
+    elseif tag == "NumberRange" then
+        local a, b = inner:match("([%-%d%.eE]+)%s+([%-%d%.eE]+)")
+        if a and b then props[pname] = NumberRange.new(tonumber(a), tonumber(b)) end
+    elseif tag == "Ref" then
+        node.refname = node.refname or {}
+        node.refname[pname] = inner:match("^%s*(.-)%s*$")
+    end
+end
+
+local function parseXml(data)
+    local insts, order, stack, refMap, list = {}, {}, {}, {}, {}
+    local idc, pos, steps = 0, 1, 0
+    local find = string.find
+    while true do
+        local s, e, closing, tag, attrs = find(data, "<(/?)([%w_]+)([^>]*)>", pos)
+        if not s then break end
+        pos = e + 1
         steps += 1
-        if steps % 400 == 0 then task.wait() end
-        if best == "open" then
-            idc += 1
-            local parent = stack[#stack]
-            local node = {id = idc, class = cap, name = cap, parent = parent and parent.id or -1}
-            insts[idc] = node
-            order[#order + 1] = idc
-            table.insert(stack, node)
-        elseif best == "close" then
-            local it = table.remove(stack)
-            if it and SCRIPT_CLASSES[it.class] and it.source and #it.source > 0 then
-                local names = {}
-                for _, a in ipairs(stack) do names[#names + 1] = a.name end
-                names[#names + 1] = it.name
-                list[#list + 1] = {path = table.concat(names, "/"), class = it.class, source = it.source}
+        if steps % 600 == 0 then task.wait() end
+        if tag == "Item" then
+            local selfClose = attrs:sub(-1) == "/"
+            if closing == "" then
+                idc += 1
+                local top = stack[#stack]
+                local node = {
+                    id = idc, class = attrs:match('class="([^"]*)"') or "Folder", name = "?",
+                    parent = top and top.id or -1,
+                }
+                node.name = node.class
+                local rf = attrs:match('referent="([^"]*)"')
+                if rf then refMap[rf] = idc end
+                insts[idc] = node
+                order[#order + 1] = idc
+                if not selfClose then table.insert(stack, node) end
+            else
+                local it = table.remove(stack)
+                if it and SCRIPT_CLASSES[it.class] and it.source and #it.source > 0 then
+                    local names = {}
+                    for _, a in ipairs(stack) do names[#names + 1] = a.name end
+                    names[#names + 1] = it.name
+                    list[#list + 1] = {path = table.concat(names, "/"), class = it.class, source = it.source}
+                end
             end
-        elseif best == "name" then
-            local top = stack[#stack]
-            if top then top.name = unesc(cap) end
-        elseif best == "src" then
-            local top = stack[#stack]
-            if top then top.source = cap:match("^<!%[CDATA%[(.*)%]%]>$") or unesc(cap) end
+        elseif closing == "" and #stack > 0 and tag ~= "Properties" and attrs:sub(-1) ~= "/" then
+            local cs, ce = find(data, "</" .. tag .. ">", pos, true)
+            if cs then
+                local inner = data:sub(pos, cs - 1)
+                pos = ce + 1
+                applyXmlProp(stack[#stack], tag, attrs:match('name="([^"]*)"'), inner)
+            end
+        end
+    end
+    for _, it in pairs(insts) do
+        if it.refname then
+            it.refprops = {}
+            for k, rf in pairs(it.refname) do
+                if refMap[rf] then it.refprops[k] = refMap[rf] end
+            end
+            it.refname = nil
         end
     end
     return list, {insts = insts, order = order}
 end
 
+-- ---------- Studio Lite editor ----------
 local function pathOf(inst, stopAt)
     local names, cur = {}, inst
     while cur and cur ~= stopAt do
@@ -728,7 +952,6 @@ local function getServerFunctions()
     return f and f:FindFirstChild("ServerFunctions")
 end
 
--- ambil template isi script (SL_CodeTextBox dkk) dari server Studio Lite
 local function getTemplate(className)
     if templateCache[className] then return templateCache[className] end
     local sf, key = getServerFunctions(), TEMPLATE_KEY[className]
@@ -751,7 +974,7 @@ local function applySource(inst, text)
         end
     end
     local box = inst:FindFirstChild("SL_CodeTextBox")
-    if not box then -- fallback kalau server Studio Lite tidak ditemukan
+    if not box then
         box = Instance.new("TextBox")
         box.Name = "SL_CodeTextBox"
         box.MultiLine = true
@@ -769,7 +992,6 @@ local function applySource(inst, text)
     end
 end
 
--- bersihkan markup RichText (<font color=...>, <b>, &lt; dst) jadi kode Lua polos
 local function cleanSource(src)
     if src:find("<font color=", 1, true) or src:find("<b><font", 1, true) then
         src = src:gsub("</?font[^>]*>", ""):gsub("</?[biu]>", "")
@@ -785,13 +1007,13 @@ local function pushSource(inst, folderName, path, class, source)
         if setscriptable then setscriptable(inst, "Source", true) end
         inst.Source = source
     end)
-    -- isi script dimasukkan ke editor Studio Lite (sistem script awal)
     local text = #source > 150000 and source:sub(1, 150000) or source
     applySource(inst, text)
     env.ImportedSources[folderName .. "/" .. path] = source
     registerScript(path, class, source)
 end
 
+-- jalur GetObjects: cocokkan script berdasar path
 local function attachSources(objs, folder, parsed)
     local queues = {}
     for _, sc in ipairs(parsed) do
@@ -823,135 +1045,235 @@ local function attachSources(objs, folder, parsed)
     return n
 end
 
--- Fallback: bangun ulang hierarki dari isi file (dipakai bila GetObjects kosong, mis. .rbxl)
--- Script dibuat sebagai script asli, objek lain jadi Folder bernama sama.
-local MAX_NODES = 25000
-local function buildFromTree(folder, tree)
+-- ---------- Rebuild: bangun instance asli dari isi file ----------
+local MAX_NODES = 60000
+local ALIAS = {size = "Size", Color3uint8 = "Color", MeshContent = "MeshId", TextureContent = "TextureID"}
+
+local function buildFromTree(folder, tree, opts, prog)
     local insts, order = tree.insts, tree.order
-    local made, objCount, scriptCount = {}, 0, 0
-    local limit = math.min(#order, MAX_NODES)
-    for idx = 1, limit do
-        local r = order[idx]
+    local skipMemo = {}
+    local function isSkipped(r)
+        local m = skipMemo[r]
+        if m ~= nil then return m end
         local it = insts[r]
-        local inst
-        if SCRIPT_CLASSES[it.class] then
-            local ok, o = pcall(Instance.new, it.class)
-            if ok then
-                inst = o
-                pcall(function() inst.Disabled = true end)
-            end
+        local res = false
+        if not it then
+            res = true
+        elseif SKIP_CLASSES[it.class] then
+            res = true
+        elseif it.parent and it.parent ~= -1 and insts[it.parent] then
+            res = isSkipped(it.parent)
         end
-        if not inst then inst = Instance.new("Folder") end
+        skipMemo[r] = res
+        return res
+    end
+
+    local list, truncated = {}, false
+    for _, r in ipairs(order) do
+        if #list >= MAX_NODES then truncated = true; break end
+        if not isSkipped(r) then list[#list + 1] = r end
+    end
+    local total = #list
+    local made = {}
+    local st = {objects = 0, scripts = 0, parts = 0, meshFail = 0, unions = 0, truncated = truncated}
+
+    -- 1) buat instance + set properti
+    for idx, r in ipairs(list) do
+        local it = insts[r]
+        local okN, inst = pcall(Instance.new, it.class)
+        if not okN then inst = Instance.new("Folder") end
         pcall(function() inst.Name = it.name end)
         made[r] = inst
-        if idx % 300 == 0 then task.wait() end
+        if it.props then
+            local hasC3 = it.props.Color3uint8 ~= nil
+            for pname, val in pairs(it.props) do
+                if not (pname == "BrickColor" and hasC3) then
+                    local target = ALIAS[pname] or pname
+                    if type(val) == "table" and val.tok ~= nil then
+                        pcall(function()
+                            local cur = inst[target]
+                            if typeof(cur) == "EnumItem" then
+                                inst[target] = cur.EnumType:FromValue(val.tok)
+                            end
+                        end)
+                    else
+                        local ok = pcall(function() inst[target] = val end)
+                        if not ok and target == "MeshId" then st.meshFail += 1 end
+                    end
+                end
+            end
+        end
+        if inst:IsA("BasePart") then
+            st.parts += 1
+            if opts.anchor then pcall(function() inst.Anchored = true end) end
+        end
+        if it.class == "UnionOperation" or it.class == "NegateOperation" then st.unions += 1 end
+        if idx % 200 == 0 then
+            prog(0.30 + 0.35 * idx / total, "Membuat object " .. idx .. " / " .. total)
+            task.wait()
+        end
     end
-    for idx = 1, limit do
-        local r = order[idx]
+
+    -- 2) susun hierarki (anak ke induk dulu, root terakhir supaya masuk Workspace sekali jalan)
+    for idx, r in ipairs(list) do
+        local par = made[insts[r].parent]
+        if par then pcall(function() made[r].Parent = par end) end
+        if idx % 400 == 0 then task.wait() end
+    end
+    for idx, r in ipairs(list) do
+        if not made[insts[r].parent] then
+            pcall(function() made[r].Parent = folder end)
+            st.objects += 1
+        end
+        if idx % 400 == 0 then task.wait() end
+    end
+    st.objects = total
+
+    -- 3) referensi (PrimaryPart, Part0/Part1 weld, dll)
+    prog(0.70, "Menyambung referensi...")
+    for _, r in ipairs(list) do
         local it = insts[r]
-        local inst = made[r]
-        local par = made[it.parent]
-        inst.Parent = par or folder
-        objCount += 1
-        if idx % 300 == 0 then task.wait() end
+        if it.refprops then
+            for pname, id in pairs(it.refprops) do
+                local target = made[id]
+                if target then pcall(function() made[r][pname] = target end) end
+            end
+        end
     end
-    for idx = 1, limit do
-        local r = order[idx]
+
+    -- 4) script
+    local sc = 0
+    local scriptTotalCount = 0
+    for _, r in ipairs(list) do
+        local it = insts[r]
+        if SCRIPT_CLASSES[it.class] and it.source and #it.source > 0 then scriptTotalCount += 1 end
+    end
+    for idx, r in ipairs(list) do
         local it = insts[r]
         local inst = made[r]
         if SCRIPT_CLASSES[it.class] and it.source and #it.source > 0 and inst.ClassName == it.class then
-            scriptCount += 1
+            sc += 1
             pushSource(inst, folder.Name, chainPath(insts, it), it.class, cleanSource(it.source))
-            if scriptCount % 20 == 0 then task.wait() end
+            if sc % 10 == 0 then
+                prog(0.75 + 0.22 * sc / math.max(scriptTotalCount, 1), "Script " .. sc .. " / " .. scriptTotalCount)
+                task.wait()
+            end
         end
     end
-    return objCount, scriptCount, #order > limit
+    st.scripts = sc
+    return st
 end
 
-local function importFile(info)
+-- ---------- Import ----------
+local function tryLoad(path)
+    local okA, asset = pcall(getcustomasset, path)
+    if not okA then return nil end
+    local ok1, o1 = pcall(function() return game:GetObjects(asset) end)
+    if ok1 and type(o1) == "table" and #o1 > 0 then return o1 end
+    local ok2, o2 = pcall(function() return game:GetService("InsertService"):LoadLocalAsset(asset) end)
+    if ok2 and typeof(o2) == "Instance" then return {o2} end
+    return nil
+end
+
+local function importFile(info, prog)
     if not (readfile and getcustomasset) then
         return false, "Executor tidak support readfile/getcustomasset"
     end
-
-    -- baca & parse isi file dulu (dipakai untuk isi script + fallback)
-    local parsed, tree, scriptErr
+    prog(0.04, "Membaca file...")
     local okR, data = pcall(readfile, info.path)
-    if okR and type(data) == "string" then
-        local okP, a, b = pcall(function()
-            if data:sub(1, 8) == "<roblox!" then return parseBinary(data) end
-            if data:find("<roblox", 1, true) then return parseXml(data) end
-        end)
-        if okP then parsed, tree = a, b else scriptErr = tostring(a) end
-    end
+    if not (okR and type(data) == "string") then return false, "Gagal membaca file" end
+
+    prog(0.10, "Membaca struktur file...")
+    local parsed, tree, perr
+    local okP, a, b = pcall(function()
+        if data:sub(1, 8) == "<roblox!" then return parseBinary(data) end
+        if data:find("<roblox", 1, true) then return parseXml(data) end
+    end)
+    if okP then parsed, tree = a, b else perr = tostring(a) end
+    data = nil
 
     local base = info.name:gsub("%.[^%.]+$", "")
     local name, n = base, 1
     while workspace:FindFirstChild(name) do n += 1; name = base .. "_" .. n end
     local folder = new("Folder", {Name = name}, workspace)
 
-    -- cara 1: GetObjects
-    local count = 0
-    local ok, objs = pcall(function()
-        return game:GetObjects(getcustomasset(info.path))
-    end)
-    local gotObjects = ok and type(objs) == "table" and #objs > 0
-    if gotObjects then
-        local function adopt(obj)
-            local okp = pcall(function() obj.Parent = folder end)
-            if okp and obj.Parent == folder then count += 1 return end
-            -- service / DataModel (hasil .rbxl): pindahkan isinya ke subfolder
-            local sub = Instance.new("Folder")
-            sub.Name = obj.Name
-            local moved = 0
-            for _, ch in ipairs(obj:GetChildren()) do
-                if pcall(function() ch.Parent = sub end) and ch.Parent == sub then moved += 1 end
+    local count, via, scriptCount, detail = 0, "GetObjects", 0, ""
+    local expected = tree and #tree.order or 0
+
+    -- cara 1: GetObjects / LoadLocalAsset
+    if not settings.force then
+        prog(0.20, "Memuat model...")
+        local objs = tryLoad(info.path)
+        if objs then
+            local function adopt(obj)
+                local okp = pcall(function() obj.Parent = folder end)
+                if okp and obj.Parent == folder then count += 1 return end
+                local sub = Instance.new("Folder")
+                sub.Name = obj.Name
+                local moved = 0
+                for _, ch in ipairs(obj:GetChildren()) do
+                    if pcall(function() ch.Parent = sub end) and ch.Parent == sub then moved += 1 end
+                end
+                if moved > 0 then sub.Parent = folder; count += moved else sub:Destroy() end
             end
-            if moved > 0 then sub.Parent = folder; count += moved else sub:Destroy() end
-        end
-        for _, obj in ipairs(objs) do
-            if obj:IsA("DataModel") then
-                for _, svc in ipairs(obj:GetChildren()) do adopt(svc) end
-            else
-                adopt(obj)
+            for _, obj in ipairs(objs) do
+                if typeof(obj) == "Instance" then
+                    if obj:IsA("DataModel") then
+                        for _, svc in ipairs(obj:GetChildren()) do adopt(svc) end
+                    else
+                        adopt(obj)
+                    end
+                end
+            end
+            local totalDesc = #folder:GetDescendants() + #folder:GetChildren()
+            if expected > 0 and totalDesc < expected * 0.7 then
+                -- hasil GetObjects tidak lengkap -> buang, pakai Rebuild
+                folder:ClearAllChildren()
+                count = 0
             end
         end
     end
 
-    local scriptCount = 0
-    local via = "GetObjects"
     if count > 0 then
         if parsed then
+            prog(0.70, "Memasukkan script ke editor...")
             local okA, res = pcall(attachSources, {folder}, folder, parsed)
-            if okA then scriptCount = res else scriptErr = tostring(res) end
+            if okA then scriptCount = res else detail = " (error script: " .. tostring(res):sub(1, 50) .. ")" end
         end
-    elseif tree and #tree.order > 0 then
-        -- cara 2: bangun ulang dari isi file
+    else
+        -- cara 2: Rebuild dari isi file
+        if not tree or #tree.order == 0 then
+            folder:Destroy()
+            return false, perr and ("Gagal parse: " .. perr:sub(1, 70)) or "File kosong / format tidak didukung"
+        end
         via = "Rebuild"
-        local okB, oc, sc, trunc = pcall(buildFromTree, folder, tree)
-        if okB then
-            count, scriptCount = oc, sc
-            if trunc then via = "Rebuild (dipotong " .. MAX_NODES .. " node)" end
-        else
-            scriptErr = tostring(oc)
+        prog(0.30, "Membangun ulang model & part...")
+        local okB, st = pcall(buildFromTree, folder, tree, {anchor = settings.anchor}, prog)
+        if not okB then
+            folder:Destroy()
+            return false, "Rebuild gagal: " .. tostring(st):sub(1, 80)
         end
+        count, scriptCount = st.objects, st.scripts
+        detail = " | " .. st.parts .. " part"
+        if st.meshFail > 0 then detail = detail .. " | " .. st.meshFail .. " mesh gagal di-set" end
+        if st.unions > 0 then detail = detail .. " | " .. st.unions .. " union kosong" end
+        if st.truncated then detail = detail .. " | dipotong " .. MAX_NODES .. " node" end
     end
 
     if count == 0 then
         folder:Destroy()
         return false, "File kosong / format tidak didukung executor"
     end
-
-    local msg = count .. " object, " .. scriptCount .. " script [" .. via .. "] -> Workspace." .. name
-    if scriptErr then msg = msg .. " (error: " .. scriptErr:sub(1, 60) .. ")" end
-    return true, msg
+    prog(1, "Selesai")
+    return true, count .. " object, " .. scriptCount .. " script [" .. via .. "]" .. detail .. " -> Workspace." .. name
 end
 
+-- ---------- Scan + daftar file ----------
 local function kindOf(name)
     local l = name:lower()
     if l:match("%.rbxmx?$") then return "MODEL" end
     if l:match("%.rbxlx?$") then return "PLACE" end
 end
-
 local function fileName(path) return path:match("([^/\\]+)$") or path end
 
 local function scanFiles()
@@ -969,43 +1291,61 @@ local function scanFiles()
             end
         end
     end
+    table.sort(found, function(x, y) return x.name:lower() < y.name:lower() end)
     return found
 end
 
-local function addRow(info)
+local importing = false
+local function addRow(info, order)
     local isPlace = info.kind == "PLACE"
-    local col = isPlace and C.accent2 or C.ok
-    local f = new("Frame", {Size = UDim2.new(1, -4, 0, 62), BackgroundColor3 = WHITE, BorderSizePixel = 0}, listFrame)
-    corner(f, 12); stroke(f, C.border, 0.4)
-    gradient(f, C.card2, C.card, 135)
-    local tile = new("Frame", {Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(12, 11), BackgroundColor3 = col, BackgroundTransparency = 0.82, BorderSizePixel = 0}, f)
-    corner(tile, 11)
+    local col = isPlace and C.a2 or C.a1
+    local f = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, LayoutOrder = order}, listFrame)
+    corner(f, 14)
+    local st = stroke(f, C.line, 0.35, 1)
+    gradient(f, C.surface2, C.surface, 135)
+    f.MouseEnter:Connect(function() tween(st, 0.15, {Color = col, Transparency = 0.1}) end)
+    f.MouseLeave:Connect(function() tween(st, 0.15, {Color = C.line, Transparency = 0.35}) end)
+
+    local tile = new("Frame", {Size = UDim2.fromOffset(34, 34), Position = UDim2.fromOffset(10, 10), BackgroundColor3 = col, BackgroundTransparency = 0.8, BorderSizePixel = 0}, f)
+    corner(tile, 10)
     new("ImageLabel", {
-        Size = UDim2.fromOffset(20, 20), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+        Size = UDim2.fromOffset(18, 18), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
         BackgroundTransparency = 1, Image = isPlace and ICON.GAMEPAD or ICON.FILE, ImageColor3 = col,
     }, tile)
-    local n = label(f, info.name, 12, UDim2.fromOffset(62, 9), UDim2.new(1, -156, 0, 18))
-    n.TextTruncate = Enum.TextTruncate.AtEnd
-    local p = label(f, info.path, 9, UDim2.fromOffset(62, 27), UDim2.new(1, -156, 0, 14), C.muted, Enum.Font.Gotham)
-    p.TextTruncate = Enum.TextTruncate.AtEnd
+    local nl = label(f, info.name, 11, UDim2.fromOffset(52, 9), UDim2.new(1, -62, 0, 16))
+    nl.TextTruncate = Enum.TextTruncate.AtEnd
     local tag = new("TextLabel", {
-        Size = UDim2.fromOffset(46, 13), Position = UDim2.fromOffset(62, 44), BackgroundColor3 = col,
-        Text = info.kind, Font = Enum.Font.GothamBold, TextSize = 8, TextColor3 = Color3.fromRGB(20, 15, 10),
+        Size = UDim2.fromOffset(44, 14), Position = UDim2.fromOffset(52, 29), BackgroundColor3 = col,
+        Text = info.kind, Font = Enum.Font.GothamBold, TextSize = 8, TextColor3 = C.ink, BorderSizePixel = 0,
     }, f)
-    corner(tag, 6)
-    local btn, btnLbl = primaryButton(f, "IMPORT", UDim2.new(1, -88, 0.5, -15), UDim2.fromOffset(76, 30))
+    corner(tag, 7)
+    local ext = info.name:match("(%.[^%.]+)$") or ""
+    label(f, ext, 9, UDim2.fromOffset(102, 28), UDim2.fromOffset(60, 16), C.muted, Enum.Font.Gotham)
+
+    local btn, btnLbl = gradButton(f, "IMPORT", UDim2.fromOffset(10, 56), UDim2.new(1, -20, 0, 26))
     btn.MouseButton1Click:Connect(function()
-        if btnLbl.Text ~= "IMPORT" then return end
-        btnLbl.Text = "LOADING"
+        if importing then
+            notify("Sibuk", "Tunggu import sebelumnya selesai.", true)
+            return
+        end
+        importing = true
+        btnLbl.Text = "LOADING..."
         task.spawn(function()
-            local ok, msg = importFile(info)
+            local pok, ok, msg = pcall(importFile, info, setProg)
+            if not pok then
+                msg = "Error: " .. tostring(ok):sub(1, 90)
+                ok = false
+            end
             btnLbl.Text = ok and "DONE" or "FAIL"
             if ok then
                 importedTotal += 1
                 statImported.Text = tostring(importedTotal)
             end
-            notify(ok and "Success" or "Failed", msg, not ok)
-            task.wait(2)
+            setProg(ok and 1 or 0, ok and "Selesai" or "Gagal")
+            notify(ok and "Berhasil" or "Gagal", msg, not ok)
+            importing = false
+            task.wait(2.5)
+            resetProg()
             if btn.Parent then btnLbl.Text = "IMPORT" end
         end)
     end)
@@ -1016,24 +1356,27 @@ local scanning = false
 local function refresh()
     if scanning then return end
     scanning = true
-    rescanLbl.Text = "SCANNING..."
     for _, r in ipairs(rows) do r.frame:Destroy() end
     table.clear(rows)
     if makefolder and isfolder and not isfolder(ASSET_FOLDER) then pcall(makefolder, ASSET_FOLDER) end
+    setProg(0.5, "Memindai file...")
     local files = scanFiles()
-    for _, info in ipairs(files) do addRow(info) end
-    statAssets.Text = tostring(#files)
+    for i, info in ipairs(files) do addRow(info, i) end
+    statFiles.Text = tostring(#files)
     applyFilter()
-    rescanLbl.Text = "RESCAN"
+    resetProg()
     if #files > 0 then
-        notify("Scan Complete", "Ditemukan " .. #files .. " file asset.", false)
+        notify("Pemindaian selesai", "Ditemukan " .. #files .. " file asset.", false)
     else
-        notify("Empty", "Tidak ada file asset di workspace/" .. ASSET_FOLDER, true)
+        notify("Kosong", "Tidak ada file asset di workspace/" .. ASSET_FOLDER, true)
     end
     scanning = false
 end
-rescan.MouseButton1Click:Connect(refresh)
+rescan.MouseButton1Click:Connect(function()
+    tween(rescanIcon, 0.4, {Rotation = rescanIcon.Rotation + 360})
+    refresh()
+end)
 
-showView("Overview")
+showTab("Library")
 openMain()
 task.defer(refresh)
