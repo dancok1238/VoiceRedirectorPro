@@ -554,9 +554,19 @@ local function applySource(inst, text)
     end
 end
 
+-- bersihkan markup RichText (<font color=...>, <b>, &lt; dst) jadi kode Lua polos
+local function cleanSource(src)
+    if src:find("<font color=", 1, true) or src:find("<b><font", 1, true) then
+        src = src:gsub("</?font[^>]*>", ""):gsub("</?[biu]>", "")
+        src = src:gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&quot;", '"'):gsub("&apos;", "'"):gsub("&amp;", "&")
+    end
+    return src
+end
+
 local function attachSources(objs, folder, parsed)
     local queues = {}
     for _, sc in ipairs(parsed) do
+        sc.source = cleanSource(sc.source)
         local key = sc.path .. "|" .. sc.class
         queues[key] = queues[key] or {}
         table.insert(queues[key], sc)
