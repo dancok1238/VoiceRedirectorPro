@@ -164,7 +164,8 @@ end
 
 navButton("Overview", 1)
 navButton("Assets", 2)
-navButton("Settings", 3)
+navButton("Scripts", 3)
+navButton("Settings", 4)
 
 -- ---- Overview ----
 local ov = makeView("Overview")
@@ -229,6 +230,61 @@ label(sv, "About", 17, UDim2.fromOffset(20, 20), UDim2.new(1, -40, 0, 24))
 local about = label(sv, "Asset Importer: scan dan import file .rbxm/.rbxl dari folder workspace executor ke Workspace game (lokal/client).", 11, UDim2.fromOffset(20, 54), UDim2.new(1, -40, 0, 60), C.muted, Enum.Font.Gotham)
 about.TextWrapped = true; about.TextYAlignment = Enum.TextYAlignment.Top
 
+-- ---- Scripts (viewer) ----
+local scv = makeView("Scripts")
+label(scv, "Script Viewer", 17, UDim2.fromOffset(20, 20), UDim2.new(1, -60, 0, 22))
+local scList = new("ScrollingFrame", {
+    Size = UDim2.new(1, -40, 0, 110), Position = UDim2.fromOffset(20, 50),
+    BackgroundColor3 = C.card, ScrollBarThickness = 2, ScrollBarImageColor3 = C.accent,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+}, scv)
+corner(scList, 8)
+new("UIListLayout", {Padding = UDim.new(0, 4)}, scList)
+local codeBox = new("TextBox", {
+    Size = UDim2.new(1, -40, 1, -210), Position = UDim2.fromOffset(20, 168),
+    BackgroundColor3 = C.card, Text = "Import file dulu, lalu pilih script di atas.",
+    TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    ClearTextOnFocus = false, TextEditable = false, MultiLine = true,
+    TextWrapped = false, ClipsDescendants = true,
+}, scv)
+corner(codeBox, 8)
+local copyBtn = new("TextButton", {
+    Size = UDim2.fromOffset(100, 26), Position = UDim2.new(0, 20, 1, -34),
+    BackgroundColor3 = C.accent, Text = "COPY", Font = Enum.Font.GothamBold,
+    TextSize = 11, TextColor3 = Color3.new(1, 1, 1),
+}, scv)
+corner(copyBtn, 8)
+
+local currentSrc = ""
+local function showSource(src)
+    currentSrc = src
+    if #src > 20000 then
+        codeBox.Text = src:sub(1, 20000) .. "\n-- [dipotong, pakai COPY untuk isi penuh]"
+    else
+        codeBox.Text = src
+    end
+end
+copyBtn.MouseButton1Click:Connect(function()
+    if setclipboard and currentSrc ~= "" then
+        pcall(setclipboard, currentSrc)
+        notify("Copied", "Isi script disalin ke clipboard.", false)
+    else
+        notify("Failed", "Pilih script dulu / executor tanpa setclipboard.", true)
+    end
+end)
+
+local function registerScript(path, class, src)
+    local b = new("TextButton", {
+        Size = UDim2.new(1, -8, 0, 22), BackgroundColor3 = Color3.fromRGB(32, 24, 46),
+        Text = " [" .. class .. "] " .. path, Font = Enum.Font.GothamMedium, TextSize = 10,
+        TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    }, scList)
+    corner(b, 6)
+    b.MouseButton1Click:Connect(function() showSource(src) end)
+end
+
 -- ============ Logic ============
 local function kindOf(name)
     local l = name:lower()
@@ -256,6 +312,230 @@ local function scanFiles()
     return found
 end
 
+-- ---------- Parser file rbxm/rbxmx (untuk baca isi script) ----------
+local SCRIPT_CLASSES = {Script = true, LocalScript = true, ModuleScript = true}
+
+local function lz4block(src)
+    local out, o, i, n = {}, 0, 1, #src
+    local byte = string.byte
+    while i <= n do
+        local token = byte(src, i); i += 1
+        local lit = bit32.rshift(token, 4)
+        if lit == 15 then
+            local b
+            repeat b = byte(src, i); i += 1; lit += b until b ~= 255
+        end
+        for k = 0, lit - 1 do out[o + k + 1] = byte(src, i + k) end
+        o += lit; i += lit
+        if i > n then break end
+        local off = byte(src, i) + byte(src, i + 1) * 256; i += 2
+        local ml = bit32.band(token, 15)
+        if ml == 15 then
+            local b
+            repeat b = byte(src, i); i += 1; ml += b until b ~= 255
+        end
+        ml += 4
+        local start = o - off
+        for k = 1, ml do out[o + k] = out[start + k] end
+        o += ml
+    end
+    local parts = {}
+    for st = 1, o, 4096 do
+        parts[#parts + 1] = string.char(table.unpack(out, st, math.min(st + 4095, o)))
+    end
+    return table.concat(parts)
+end
+
+local function decompressChunk(comp, raw)
+    if comp == 0 then return raw end
+    if raw:sub(1, 4) == "\40\181\47\253" then
+        assert(zstddecompress, "executor tidak support zstddecompress")
+        return zstddecompress(raw)
+    end
+    return lz4block(raw)
+end
+
+local function readInts(data, pos, n)
+    local res, byte = {}, string.byte
+    for i = 0, n - 1 do
+        local x = byte(data, pos + i) * 16777216 + byte(data, pos + n + i) * 65536
+            + byte(data, pos + 2 * n + i) * 256 + byte(data, pos + 3 * n + i)
+        res[i + 1] = (x % 2 == 0) and (x / 2) or (-(x + 1) / 2)
+    end
+    return res, pos + n * 4
+end
+
+local function readRefs(data, pos, n)
+    local ints, np = readInts(data, pos, n)
+    local acc = 0
+    for i = 1, n do acc += ints[i]; ints[i] = acc end
+    return ints, np
+end
+
+local function chainPath(insts, inst)
+    local names, cur = {}, inst
+    while cur do
+        table.insert(names, 1, cur.name)
+        cur = insts[cur.parent]
+    end
+    return table.concat(names, "/")
+end
+
+local function parseBinary(data)
+    if data:sub(1, 8) ~= "<roblox!" then return nil end
+    local pos = 33
+    local classes, insts, order = {}, {}, {}
+    while pos <= #data do
+        local name = data:sub(pos, pos + 3)
+        local comp, unc = string.unpack("<I4I4", data, pos + 4)
+        pos += 16
+        local raw
+        if comp == 0 then
+            raw = data:sub(pos, pos + unc - 1); pos += unc
+        else
+            raw = data:sub(pos, pos + comp - 1); pos += comp
+        end
+        if name == "END\0" then break end
+        if name == "INST" or name == "PROP" or name == "PRNT" then
+            local chunk = decompressChunk(comp, raw)
+            if name == "INST" then
+                local cid, p = string.unpack("<I4", chunk, 1)
+                local cname; cname, p = string.unpack("<s4", chunk, p)
+                p += 1
+                local count; count, p = string.unpack("<I4", chunk, p)
+                local refs = readRefs(chunk, p, count)
+                classes[cid] = {name = cname, refs = refs}
+                for _, r in ipairs(refs) do
+                    insts[r] = {class = cname, name = cname, parent = -1}
+                    order[#order + 1] = r
+                end
+            elseif name == "PROP" then
+                local cid, p = string.unpack("<I4", chunk, 1)
+                local pname; pname, p = string.unpack("<s4", chunk, p)
+                local ptype = string.byte(chunk, p); p += 1
+                if ptype == 1 and (pname == "Name" or pname == "Source") then
+                    local cls = classes[cid]
+                    if cls then
+                        for _, r in ipairs(cls.refs) do
+                            local str; str, p = string.unpack("<s4", chunk, p)
+                            insts[r][pname == "Name" and "name" or "source"] = str
+                        end
+                    end
+                end
+            else -- PRNT
+                local p = 2
+                local count; count, p = string.unpack("<I4", chunk, p)
+                local kids; kids, p = readRefs(chunk, p, count)
+                local pars = readRefs(chunk, p, count)
+                for i = 1, count do
+                    local k = insts[kids[i]]
+                    if k then k.parent = pars[i] end
+                end
+            end
+        end
+    end
+    local list = {}
+    for _, r in ipairs(order) do
+        local it = insts[r]
+        if SCRIPT_CLASSES[it.class] and it.source and #it.source > 0 then
+            list[#list + 1] = {path = chainPath(insts, it), class = it.class, source = it.source}
+        end
+    end
+    return list
+end
+
+local function unesc(str)
+    return (str:gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&quot;", '"'):gsub("&apos;", "'"):gsub("&amp;", "&"))
+end
+
+local function parseXml(data)
+    local list, stack, pos = {}, {}, 1
+    local pats = {
+        open = '<Item class="([^"]+)"',
+        close = "</Item>",
+        name = '<string name="Name">(.-)</string>',
+        src = '<ProtectedString name="Source">(.-)</ProtectedString>',
+    }
+    local cache = {}
+    while true do
+        local best, bs, be, cap
+        for k, pat in pairs(pats) do
+            local c = cache[k]
+            if c == nil or (c ~= false and c.s < pos) then
+                local s, e, c1 = data:find(pat, pos)
+                c = s and {s = s, e = e, cap = c1} or false
+                cache[k] = c
+            end
+            if c and (not best or c.s < bs) then best, bs, be, cap = k, c.s, c.e, c.cap end
+        end
+        if not best then break end
+        pos = be + 1
+        if best == "open" then
+            table.insert(stack, {class = cap, name = cap})
+        elseif best == "close" then
+            local it = table.remove(stack)
+            if it and SCRIPT_CLASSES[it.class] and it.source and #it.source > 0 then
+                local names = {}
+                for _, a in ipairs(stack) do names[#names + 1] = a.name end
+                names[#names + 1] = it.name
+                list[#list + 1] = {path = table.concat(names, "/"), class = it.class, source = it.source}
+            end
+        elseif best == "name" then
+            local top = stack[#stack]
+            if top then top.name = unesc(cap) end
+        elseif best == "src" then
+            local top = stack[#stack]
+            if top then top.source = cap:match("^<!%[CDATA%[(.*)%]%]>$") or unesc(cap) end
+        end
+    end
+    return list
+end
+
+local function pathOf(inst, stopAt)
+    local names, cur = {}, inst
+    while cur and cur ~= stopAt do
+        table.insert(names, 1, cur.Name)
+        cur = cur.Parent
+    end
+    return table.concat(names, "/")
+end
+
+local function attachSources(objs, folder, parsed)
+    local queues = {}
+    for _, sc in ipairs(parsed) do
+        local key = sc.path .. "|" .. sc.class
+        queues[key] = queues[key] or {}
+        table.insert(queues[key], sc)
+    end
+    local env = (getgenv and getgenv()) or _G
+    env.ImportedSources = env.ImportedSources or {}
+    local n = 0
+    local function handle(inst)
+        if SCRIPT_CLASSES[inst.ClassName] then
+            local q = queues[pathOf(inst, folder) .. "|" .. inst.ClassName]
+            local sc = q and table.remove(q, 1)
+            if sc then
+                n += 1
+                pcall(function()
+                    if setscriptable then setscriptable(inst, "Source", true) end
+                    inst.Source = sc.source
+                end)
+                local sv = Instance.new("StringValue")
+                sv.Name = "SourceCode"
+                sv.Value = sc.source
+                sv.Parent = inst
+                env.ImportedSources[folder.Name .. "/" .. sc.path] = sc.source
+                registerScript(sc.path, sc.class, sc.source)
+            end
+        end
+    end
+    for _, obj in ipairs(objs) do
+        handle(obj)
+        for _, d in ipairs(obj:GetDescendants()) do handle(d) end
+    end
+    return n
+end
+
 local function importFile(info)
     if not (readfile and getcustomasset) then
         return false, "Executor tidak support readfile/getcustomasset"
@@ -275,7 +555,24 @@ local function importFile(info)
         local okp = pcall(function() obj.Parent = folder end)
         if okp then count += 1 end
     end
-    return true, count .. " object diimport ke Workspace." .. name
+
+    -- baca isi script langsung dari file
+    local scriptCount, scriptErr = 0, nil
+    local okR, data = pcall(readfile, info.path)
+    if okR and type(data) == "string" then
+        local okP, parsed = pcall(function()
+            if data:sub(1, 8) == "<roblox!" then return parseBinary(data) end
+            if data:find("<roblox", 1, true) then return parseXml(data) end
+        end)
+        if okP and type(parsed) == "table" then
+            scriptCount = attachSources(objs, folder, parsed)
+        elseif not okP then
+            scriptErr = tostring(parsed)
+        end
+    end
+    local msg = count .. " object, " .. scriptCount .. " script terbaca -> Workspace." .. name
+    if scriptErr then msg = msg .. " (parse error: " .. scriptErr:sub(1, 60) .. ")" end
+    return true, msg
 end
 
 local function addRow(info)
