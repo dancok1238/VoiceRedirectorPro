@@ -29,6 +29,11 @@ local ALLOWED_USERS = {
 -- Isi dengan link teks mentah (satu username per baris, baris diawali # = komentar).
 local WHITELIST_URL = ""
 
+-- Trial gratis 1 hari per akun (dihitung sejak pertama kali dipakai).
+-- Setelah habis, user diarahkan ke Discord untuk mendapatkan key.
+local DISCORD_URL = "https://discord.gg/EZFMQA6s67"
+local TRIAL_SECONDS = 24 * 60 * 60
+
 local ICON = {
     PACKAGE = "rbxassetid://128864012857079",
     FOLDER = "rbxassetid://88761476236687",
@@ -224,12 +229,75 @@ local function isAllowed()
     return names[lp.Name:lower()] == true or ids[lp.UserId] == true
 end
 
-if not isAllowed() then
-    notify("Akses ditolak", "@" .. lp.Name .. " belum terdaftar. Minta owner menambahkan username kamu.", true)
-    task.delay(6, function() gui:Destroy() end)
-    return
+-- sisa detik trial; nil = executor tidak bisa menyimpan file; <= 0 = habis
+local function trialLeftSeconds()
+    if not (readfile and writefile and isfile) then return nil end
+    local file = "BALEREOT_TRIAL_" .. lp.UserId .. ".dat"
+    local now = os.time()
+    local started
+    local okF, exists = pcall(isfile, file)
+    if okF and exists then
+        local okR, data = pcall(readfile, file)
+        started = (okR and tonumber(data)) or 0 -- file rusak = dianggap habis
+    else
+        started = now
+        pcall(writefile, file, tostring(now))
+    end
+    if now < started then return 0 end -- jam dimundurkan = dianggap habis
+    return started + TRIAL_SECONDS - now
 end
-notify("Akses diterima", "Selamat datang, @" .. lp.Name, false)
+
+local function showDenied(reason)
+    local f = new("Frame", {
+        Size = UDim2.fromOffset(330, 176), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+        BackgroundColor3 = Color3.fromRGB(14, 16, 30), BorderSizePixel = 0,
+    }, gui)
+    corner(f, 16)
+    stroke(f, C.line, 0.1, 1)
+    local img = new("ImageLabel", {
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = ICON.LOGO,
+        ScaleType = Enum.ScaleType.Crop, ImageTransparency = 0.55,
+    }, f)
+    corner(img, 16)
+    label(f, "AKSES DITOLAK", 13, UDim2.fromOffset(18, 14), UDim2.new(1, -36, 0, 18), C.err)
+    local m = label(f, reason .. "\nAkun: @" .. lp.Name, 10, UDim2.fromOffset(18, 38), UDim2.new(1, -36, 0, 52), C.text, Enum.Font.Gotham)
+    m.TextWrapped = true; m.TextYAlignment = Enum.TextYAlignment.Top
+    label(f, DISCORD_URL, 10, UDim2.fromOffset(18, 96), UDim2.new(1, -36, 0, 14), C.a1, Enum.Font.GothamMedium)
+    local copy = gradButton(f, "SALIN LINK DISCORD", UDim2.fromOffset(18, 124), UDim2.new(0.5, -22, 0, 32))
+    local close = gradButton(f, "TUTUP", UDim2.new(0.5, 4, 0, 124), UDim2.new(0.5, -22, 0, 32))
+    copy.MouseButton1Click:Connect(function()
+        pcall(function() game:GetService("GuiService"):OpenBrowserWindow(DISCORD_URL) end)
+        if setclipboard then
+            pcall(setclipboard, DISCORD_URL)
+            notify("Tersalin", "Link Discord disalin. Buka dan minta key di sana.", false)
+        else
+            notify("Discord", DISCORD_URL, false)
+        end
+    end)
+    close.MouseButton1Click:Connect(function() gui:Destroy() end)
+end
+
+local accessInfo = ""
+local allowed = isAllowed()
+if allowed then
+    accessInfo = "Member"
+    notify("Akses diterima", "Selamat datang, @" .. lp.Name, false)
+else
+    local left = trialLeftSeconds()
+    if left and left > 0 then
+        local h = math.floor(left / 3600)
+        local mnt = math.floor((left % 3600) / 60)
+        accessInfo = "Trial " .. h .. "j " .. mnt .. "m"
+        notify("Trial gratis 1 hari", "Sisa " .. h .. " jam " .. mnt .. " menit. Setelah itu minta key di Discord.", false)
+    else
+        if left == nil then
+            showDenied("Executor tidak mendukung trial.\nDapatkan key di Discord.")
+        else
+            showDenied("Trial gratis 1 hari sudah habis.\nDapatkan key di Discord.")
+        end
+        return
+    end
+end
 
 -- ============ Window ============
 local W, H = 540, 340
@@ -365,7 +433,7 @@ local execName = "Executor"
 pcall(function()
     if identifyexecutor then execName = tostring((identifyexecutor())) end
 end)
-local readyText = "Siap  |  " .. execName
+local readyText = "Siap  |  " .. execName .. ((accessInfo ~= "") and ("  |  " .. accessInfo) or "")
 local statusLbl = label(main, readyText, 10, UDim2.fromOffset(14, H - 30), UDim2.new(1, -100, 0, 14), C.muted, Enum.Font.GothamMedium)
 statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
 local pctLbl = label(main, "", 10, UDim2.new(1, -74, 0, H - 30), UDim2.fromOffset(60, 14), C.a1)
