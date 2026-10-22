@@ -25,6 +25,7 @@ local ICON = {
     REFRESH = "rbxassetid://13492317101",
     CHECK = "rbxassetid://18349889388",
     ALERT = "rbxassetid://7634887649",
+    LOGO = "rbxassetid://133871331523241",
 }
 
 local C = {
@@ -86,26 +87,35 @@ local function spin(g, t)
     end)
 end
 
--- Tombol gradien. Teks dipisah (label) supaya tidak ikut ter-gradient.
+-- Tombol 3D: sisi bawah (depth) + permukaan yang turun saat ditekan.
+local DEPTH_COL = Color3.fromRGB(86, 92, 148)
 local function gradButton(parent, text, pos, size, textSize)
+    local LIP = 3
     local b = new("TextButton", {
-        Position = pos, Size = size, BackgroundColor3 = WHITE, Text = "",
-        AutoButtonColor = false, ClipsDescendants = true, BorderSizePixel = 0,
+        Position = pos, Size = size, BackgroundTransparency = 1, Text = "",
+        AutoButtonColor = false, BorderSizePixel = 0,
     }, parent)
-    corner(b, 9)
-    gradient(b, C.a1, C.a2, 0)
-    local st = stroke(b, WHITE, 0.75, 1)
-    local shine = new("Frame", {
-        Size = UDim2.new(1, 0, 0.5, 0), BackgroundColor3 = WHITE, BackgroundTransparency = 1,
-        BorderSizePixel = 0, ZIndex = 2,
-    }, b)
-    corner(shine, 9)
+    local depth = new("Frame", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = DEPTH_COL, BorderSizePixel = 0}, b)
+    corner(depth, 9)
+    local face = new("Frame", {Size = UDim2.new(1, 0, 1, -LIP), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 2}, b)
+    corner(face, 9)
+    gradient(face, Color3.fromRGB(248, 249, 255), Color3.fromRGB(172, 183, 238), 90)
+    local st = stroke(face, WHITE, 0.45, 1)
+    new("Frame", {
+        Size = UDim2.new(1, -14, 0, 1), Position = UDim2.fromOffset(7, 1), BackgroundColor3 = WHITE,
+        BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 3,
+    }, face)
     local lb = new("TextLabel", {
         Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = text,
-        Font = Enum.Font.GothamBold, TextSize = textSize or 11, TextColor3 = C.ink, ZIndex = 3,
-    }, b)
-    b.MouseEnter:Connect(function() tween(st, 0.15, {Transparency = 0.2}); tween(shine, 0.15, {BackgroundTransparency = 0.88}) end)
-    b.MouseLeave:Connect(function() tween(st, 0.15, {Transparency = 0.75}); tween(shine, 0.15, {BackgroundTransparency = 1}) end)
+        Font = Enum.Font.GothamBold, TextSize = textSize or 11, TextColor3 = C.ink, ZIndex = 4,
+    }, face)
+    local function press(on)
+        tween(face, 0.07, {Position = UDim2.fromOffset(0, on and (LIP - 1) or 0)})
+    end
+    b.MouseButton1Down:Connect(function() press(true) end)
+    b.MouseButton1Up:Connect(function() press(false) end)
+    b.MouseEnter:Connect(function() tween(st, 0.15, {Transparency = 0.1}) end)
+    b.MouseLeave:Connect(function() press(false); tween(st, 0.15, {Transparency = 0.45}) end)
     return b, lb
 end
 
@@ -233,11 +243,13 @@ end
 local bar = new("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1}, main)
 local logo = new("Frame", {Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(14, 7), BackgroundColor3 = WHITE, BorderSizePixel = 0}, bar)
 corner(logo, 10)
-gradient(logo, C.a1, C.a2, 45)
-new("ImageLabel", {
-    Size = UDim2.fromOffset(20, 20), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = WHITE,
+logo.BackgroundColor3 = Color3.fromRGB(12, 10, 26)
+stroke(logo, WHITE, 0.5, 1)
+local logoImg = new("ImageLabel", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = ICON.LOGO,
+    ScaleType = Enum.ScaleType.Crop,
 }, logo)
+corner(logoImg, 10)
 label(bar, "BALEREOT COMMUNITY", 12, UDim2.fromOffset(52, 7), UDim2.fromOffset(200, 16))
 label(bar, "Asset Importer", 9, UDim2.fromOffset(52, 24), UDim2.fromOffset(200, 12), C.muted, Enum.Font.Gotham)
 
@@ -261,21 +273,27 @@ local function showTab(name)
     for n, t in pairs(tabs) do
         local on = (n == name)
         tween(t.btn, 0.2, {BackgroundTransparency = on and 0 or 1})
+        tween(t.depth, 0.2, {BackgroundTransparency = on and 0 or 1})
         tween(t.lbl, 0.2, {TextColor3 = on and C.ink or C.muted})
     end
 end
 local function tabButton(name, idx)
+    local depth = new("Frame", {
+        Size = UDim2.fromOffset(78, 28), Position = UDim2.fromOffset(14 + (idx - 1) * 84, 53),
+        BackgroundColor3 = DEPTH_COL, BackgroundTransparency = 1, BorderSizePixel = 0,
+    }, main)
+    corner(depth, 14)
     local b = new("TextButton", {
         Size = UDim2.fromOffset(78, 28), Position = UDim2.fromOffset(14 + (idx - 1) * 84, 50),
         BackgroundColor3 = WHITE, BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
     }, main)
     corner(b, 14)
-    gradient(b, C.a1, C.a2, 0)
+    gradient(b, Color3.fromRGB(248, 249, 255), Color3.fromRGB(172, 183, 238), 90)
     local lb = new("TextLabel", {
         Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = name,
         Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.muted,
     }, b)
-    tabs[name] = {btn = b, lbl = lb}
+    tabs[name] = {btn = b, lbl = lb, depth = depth}
     b.MouseButton1Click:Connect(function() showTab(name) end)
 end
 tabButton("Library", 1)
@@ -364,12 +382,17 @@ for i, nmk in ipairs({"ALL", "MODEL", "PLACE"}) do
     segBtns[nmk] = {btn = b, lbl = lb}
 end
 
+local rescanDepth = new("Frame", {
+    Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(BW - 30, 3),
+    BackgroundColor3 = DEPTH_COL, BorderSizePixel = 0,
+}, lib)
+corner(rescanDepth, 15)
 local rescan = new("TextButton", {
     Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(BW - 30, 0), BackgroundColor3 = WHITE,
     Text = "", AutoButtonColor = false,
 }, lib)
 corner(rescan, 15)
-gradient(rescan, C.a1, C.a2, 0)
+gradient(rescan, Color3.fromRGB(248, 249, 255), Color3.fromRGB(172, 183, 238), 90)
 local rescanIcon = new("ImageLabel", {
     Size = UDim2.fromOffset(16, 16), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1, Image = ICON.REFRESH, ImageColor3 = C.ink,
@@ -523,18 +546,28 @@ local unload = gradButton(card2, "UNLOAD GUI", UDim2.new(1, -126, 1, -40), UDim2
 unload.MouseButton1Click:Connect(function() gui:Destroy() end)
 
 -- ============ Tombol bulat buka / tutup ============
-local toggle = new("TextButton", {
-    Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 14, 0, 120), BackgroundColor3 = WHITE,
-    AutoButtonColor = false, Text = "", ZIndex = 20,
+local launcher = new("Frame", {
+    Size = UDim2.fromOffset(46, 50), Position = UDim2.new(0, 14, 0, 120), BackgroundTransparency = 1, ZIndex = 20,
 }, gui)
+local lDepth = new("Frame", {
+    Size = UDim2.fromOffset(46, 46), Position = UDim2.fromOffset(0, 4),
+    BackgroundColor3 = Color3.fromRGB(40, 36, 84), BorderSizePixel = 0, ZIndex = 20,
+}, launcher)
+corner(lDepth, 23)
+local toggle = new("TextButton", {
+    Size = UDim2.fromOffset(46, 46), BackgroundColor3 = Color3.fromRGB(12, 10, 26),
+    AutoButtonColor = false, Text = "", ZIndex = 21,
+}, launcher)
 corner(toggle, 23)
-gradient(toggle, C.a1, C.a2, 45)
-local ring = stroke(toggle, WHITE, 0.55, 1)
-new("ImageLabel", {
-    Size = UDim2.fromOffset(26, 26), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = WHITE, ZIndex = 21,
+stroke(toggle, WHITE, 0.35, 1.2)
+local toggleImg = new("ImageLabel", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = ICON.LOGO,
+    ScaleType = Enum.ScaleType.Crop, ZIndex = 22,
 }, toggle)
-makeDraggable(toggle, toggle, function()
+corner(toggleImg, 23)
+toggle.MouseButton1Down:Connect(function() tween(toggle, 0.07, {Position = UDim2.fromOffset(0, 3)}) end)
+toggle.MouseButton1Up:Connect(function() tween(toggle, 0.07, {Position = UDim2.fromOffset(0, 0)}) end)
+makeDraggable(toggle, launcher, function()
     if isOpen then closeMain() else openMain() end
 end)
 UIS.InputBegan:Connect(function(i, gp)
