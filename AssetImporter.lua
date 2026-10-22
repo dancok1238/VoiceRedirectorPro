@@ -500,6 +500,60 @@ local function pathOf(inst, stopAt)
     return table.concat(names, "/")
 end
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TEMPLATE_KEY = {
+    Script = "InsertScriptScript",
+    LocalScript = "InsertLocalScriptLocalScript",
+    ModuleScript = "InsertModuleScriptModuleScript",
+}
+local templateCache = {}
+
+local function getServerFunctions()
+    local f = ReplicatedStorage:FindFirstChild("StudioLiteFolder")
+    return f and f:FindFirstChild("ServerFunctions")
+end
+
+-- ambil template isi script (SL_CodeTextBox dkk) dari server Studio Lite
+local function getTemplate(className)
+    if templateCache[className] then return templateCache[className] end
+    local sf, key = getServerFunctions(), TEMPLATE_KEY[className]
+    if not (sf and key) then return nil end
+    pcall(function() sf:InvokeServer("LoadAssetToPlayerGui", key) end)
+    local holder = lp:WaitForChild("PlayerGui"):WaitForChild(key, 3)
+    if not holder then return nil end
+    local list = {}
+    for _, c in ipairs(holder:GetChildren()) do table.insert(list, c:Clone()) end
+    pcall(function() sf:InvokeServer("ClearAssetFromPlayerGui", key) end)
+    templateCache[className] = list
+    return list
+end
+
+local function applySource(inst, text)
+    if not inst:FindFirstChild("SL_CodeTextBox") then
+        local tpl = getTemplate(inst.ClassName)
+        if tpl then
+            for _, c in ipairs(tpl) do c:Clone().Parent = inst end
+        end
+    end
+    local box = inst:FindFirstChild("SL_CodeTextBox")
+    if not box then -- fallback kalau server Studio Lite tidak ditemukan
+        box = Instance.new("TextBox")
+        box.Name = "SL_CodeTextBox"
+        box.MultiLine = true
+        box.ClearTextOnFocus = false
+        box.Visible = false
+        box.Parent = inst
+    end
+    box.Text = text
+    if inst.ClassName == "ModuleScript" then
+        local ro = inst:FindFirstChild("SL_1ReadOnly")
+        if ro then
+            pcall(function() ro.ContentText = text end)
+            pcall(function() ro.Text = text end)
+        end
+    end
+end
+
 local function attachSources(objs, folder, parsed)
     local queues = {}
     for _, sc in ipairs(parsed) do
@@ -520,21 +574,9 @@ local function attachSources(objs, folder, parsed)
                     if setscriptable then setscriptable(inst, "Source", true) end
                     inst.Source = sc.source
                 end)
-                -- isi script disimpan langsung di dalam script (format editor Studio Lite)
+                -- isi script dimasukkan ke editor Studio Lite (sistem script awal)
                 local text = #sc.source > 150000 and sc.source:sub(1, 150000) or sc.source
-                local function mkBox(boxName)
-                    local oldBox = inst:FindFirstChild(boxName)
-                    if oldBox then oldBox:Destroy() end
-                    local tb = Instance.new("TextBox")
-                    tb.Name = boxName
-                    tb.MultiLine = true
-                    tb.ClearTextOnFocus = false
-                    tb.Visible = false
-                    tb.Text = text
-                    tb.Parent = inst
-                end
-                mkBox("SL_CodeTextBox")
-                if inst.ClassName == "ModuleScript" then mkBox("SL_1ReadOnly") end
+                applySource(inst, text)
                 env.ImportedSources[folder.Name .. "/" .. sc.path] = sc.source
                 registerScript(sc.path, sc.class, sc.source)
             end
