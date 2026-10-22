@@ -1,5 +1,5 @@
 --[[
-    ASSET IMPORTER v3  |  Aurora Edition
+    BALEREOT COMMUNITY  |  Asset Importer
     - Scan .rbxm / .rbxmx / .rbxl / .rbxlx dari workspace executor
     - Import ke Folder baru di Workspace (model, tool, part, script)
     - Mode utama : GetObjects / LoadLocalAsset
@@ -31,8 +31,8 @@ local C = {
     surface = Color3.fromRGB(15, 19, 33),
     surface2 = Color3.fromRGB(24, 30, 52),
     line = Color3.fromRGB(46, 56, 92),
-    a1 = Color3.fromRGB(70, 214, 255),
-    a2 = Color3.fromRGB(150, 120, 255),
+    a1 = Color3.fromRGB(226, 230, 250),
+    a2 = Color3.fromRGB(168, 178, 232),
     text = Color3.fromRGB(236, 242, 255),
     muted = Color3.fromRGB(126, 140, 172),
     ink = Color3.fromRGB(7, 10, 24),
@@ -96,7 +96,7 @@ local function gradButton(parent, text, pos, size, textSize)
     gradient(b, C.a1, C.a2, 0)
     local st = stroke(b, WHITE, 0.75, 1)
     local shine = new("Frame", {
-        Size = UDim2.new(1, 0, 0.5, 0), BackgroundColor3 = WHITE, BackgroundTransparency = 0.82,
+        Size = UDim2.new(1, 0, 0.5, 0), BackgroundColor3 = WHITE, BackgroundTransparency = 1,
         BorderSizePixel = 0, ZIndex = 2,
     }, b)
     corner(shine, 9)
@@ -104,8 +104,8 @@ local function gradButton(parent, text, pos, size, textSize)
         Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = text,
         Font = Enum.Font.GothamBold, TextSize = textSize or 11, TextColor3 = C.ink, ZIndex = 3,
     }, b)
-    b.MouseEnter:Connect(function() tween(st, 0.15, {Transparency = 0.2}); tween(shine, 0.15, {BackgroundTransparency = 0.65}) end)
-    b.MouseLeave:Connect(function() tween(st, 0.15, {Transparency = 0.75}); tween(shine, 0.15, {BackgroundTransparency = 0.82}) end)
+    b.MouseEnter:Connect(function() tween(st, 0.15, {Transparency = 0.2}); tween(shine, 0.15, {BackgroundTransparency = 0.88}) end)
+    b.MouseLeave:Connect(function() tween(st, 0.15, {Transparency = 0.75}); tween(shine, 0.15, {BackgroundTransparency = 1}) end)
     return b, lb
 end
 
@@ -142,11 +142,11 @@ local function getParent()
     return lp:WaitForChild("PlayerGui")
 end
 
-local old = getParent():FindFirstChild("AssetImporterUI")
+local old = getParent():FindFirstChild("BalereotCommunityUI")
 if old then old:Destroy() end
 
 local gui = new("ScreenGui", {
-    Name = "AssetImporterUI", ResetOnSpawn = false, IgnoreGuiInset = true,
+    Name = "BalereotCommunityUI", ResetOnSpawn = false, IgnoreGuiInset = true,
     DisplayOrder = 100, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, getParent())
 
@@ -186,9 +186,20 @@ local main = new("Frame", {
 }, gui)
 corner(main, 18)
 gradient(main, Color3.fromRGB(18, 22, 40), Color3.fromRGB(7, 9, 18), 120)
-local mainStroke = stroke(main, WHITE, 0.2, 1.6)
-spin(gradient3(mainStroke, C.a1, C.a2, C.a1, 0), 7)
+local mainStroke = stroke(main, C.line, 0.1, 1)
 local scale = new("UIScale", {}, main)
+
+-- background gambar + lapisan gelap tipis agar teks tetap terbaca
+local bgImg = new("ImageLabel", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = "rbxassetid://133871331523241",
+    ScaleType = Enum.ScaleType.Crop, ImageTransparency = 0.3,
+}, main)
+corner(bgImg, 18)
+local bgShade = new("Frame", {
+    Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(5, 7, 14),
+    BackgroundTransparency = 0.4, BorderSizePixel = 0,
+}, main)
+corner(bgShade, 18)
 
 local baseScale = 1
 local function fit()
@@ -227,8 +238,8 @@ new("ImageLabel", {
     Size = UDim2.fromOffset(20, 20), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = WHITE,
 }, logo)
-label(bar, "ASSET IMPORTER", 13, UDim2.fromOffset(52, 7), UDim2.fromOffset(200, 16))
-label(bar, "Model  |  Place  |  Script", 9, UDim2.fromOffset(52, 24), UDim2.fromOffset(200, 12), C.muted, Enum.Font.Gotham)
+label(bar, "BALEREOT COMMUNITY", 12, UDim2.fromOffset(52, 7), UDim2.fromOffset(200, 16))
+label(bar, "Asset Importer", 9, UDim2.fromOffset(52, 24), UDim2.fromOffset(200, 12), C.muted, Enum.Font.Gotham)
 
 local closeBtn = new("TextButton", {
     Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -42, 0, 8), BackgroundColor3 = C.surface2,
@@ -276,7 +287,7 @@ local function chip(idx, title)
         Size = UDim2.fromOffset(76, 24), Position = UDim2.fromOffset(W - 14 - 240 + (idx - 1) * 82, 52),
         BackgroundColor3 = C.surface, BorderSizePixel = 0,
     }, main)
-    corner(f, 12); stroke(f, C.line, 0.4)
+    f.BackgroundTransparency = 1
     label(f, title, 8, UDim2.fromOffset(9, 0), UDim2.new(0, 44, 1, 0), C.muted)
     local v = label(f, "0", 11, UDim2.new(0, 44, 0, 0), UDim2.new(1, -53, 1, 0), C.a1)
     v.TextXAlignment = Enum.TextXAlignment.Right
@@ -329,14 +340,14 @@ local lib = makeView("Library")
 local rows, filterKind, searchText = {}, "ALL", ""
 
 local searchBox = new("TextBox", {
-    Size = UDim2.fromOffset(BW - 150 - 30 - 16, 30), Position = UDim2.fromOffset(0, 0), BackgroundColor3 = C.surface,
+    Size = UDim2.fromOffset(BW - 150 - 30 - 16, 30), Position = UDim2.fromOffset(0, 0), BackgroundColor3 = C.surface, BackgroundTransparency = 0.3,
     Text = "", PlaceholderText = "Cari asset...", PlaceholderColor3 = C.muted, TextColor3 = C.text,
     Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
 }, lib)
 corner(searchBox, 15); stroke(searchBox, C.line, 0.4)
 new("UIPadding", {PaddingLeft = UDim.new(0, 14)}, searchBox)
 
-local seg = new("Frame", {Size = UDim2.fromOffset(150, 30), Position = UDim2.fromOffset(BW - 150 - 30 - 8, 0), BackgroundColor3 = C.surface, BorderSizePixel = 0}, lib)
+local seg = new("Frame", {Size = UDim2.fromOffset(150, 30), Position = UDim2.fromOffset(BW - 150 - 30 - 8, 0), BackgroundColor3 = C.surface, BackgroundTransparency = 0.3, BorderSizePixel = 0}, lib)
 corner(seg, 15); stroke(seg, C.line, 0.4)
 local segBtns = {}
 for i, nmk in ipairs({"ALL", "MODEL", "PLACE"}) do
@@ -413,7 +424,7 @@ end)
 -- ===== Scripts =====
 local scv = makeView("Scripts")
 local scList = new("ScrollingFrame", {
-    Size = UDim2.fromOffset(190, BH), BackgroundColor3 = C.surface, BorderSizePixel = 0,
+    Size = UDim2.fromOffset(190, BH), BackgroundColor3 = C.surface, BackgroundTransparency = 0.3, BorderSizePixel = 0,
     ScrollBarThickness = 3, ScrollBarImageColor3 = C.a1,
     AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
 }, scv)
@@ -422,7 +433,7 @@ new("UIPadding", {PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), P
 new("UIListLayout", {Padding = UDim.new(0, 4)}, scList)
 
 local codeBox = new("TextBox", {
-    Size = UDim2.fromOffset(314, BH - 38), Position = UDim2.fromOffset(198, 0), BackgroundColor3 = Color3.fromRGB(10, 12, 22),
+    Size = UDim2.fromOffset(314, BH - 38), Position = UDim2.fromOffset(198, 0), BackgroundColor3 = Color3.fromRGB(10, 12, 22), BackgroundTransparency = 0.2,
     Text = "Import file dulu, lalu pilih script di kiri.", TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 11,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     ClearTextOnFocus = false, TextEditable = false, MultiLine = true, TextWrapped = false, ClipsDescendants = true,
@@ -468,7 +479,7 @@ end
 
 -- ===== Settings =====
 local sv = makeView("Settings")
-local card1 = new("Frame", {Size = UDim2.fromOffset(BW, 112), BackgroundColor3 = C.surface, BorderSizePixel = 0}, sv)
+local card1 = new("Frame", {Size = UDim2.fromOffset(BW, 112), BackgroundColor3 = C.surface, BackgroundTransparency = 0.3, BorderSizePixel = 0}, sv)
 corner(card1, 14); stroke(card1, C.line, 0.4)
 
 local function toggleRow(y, title, desc, key)
@@ -503,9 +514,9 @@ end
 toggleRow(10, "Anchor semua part", "Mode Rebuild: part dikunci supaya tidak jatuh / berantakan.", "anchor")
 toggleRow(60, "Paksa mode Rebuild", "Lewati GetObjects, selalu baca isi file sendiri.", "force")
 
-local card2 = new("Frame", {Size = UDim2.fromOffset(BW, 100), Position = UDim2.fromOffset(0, 122), BackgroundColor3 = C.surface, BorderSizePixel = 0}, sv)
+local card2 = new("Frame", {Size = UDim2.fromOffset(BW, 100), Position = UDim2.fromOffset(0, 122), BackgroundColor3 = C.surface, BackgroundTransparency = 0.3, BorderSizePixel = 0}, sv)
 corner(card2, 14); stroke(card2, C.line, 0.4)
-label(card2, "Asset Importer v3  -  Aurora Edition", 12, UDim2.fromOffset(16, 12), UDim2.new(1, -32, 0, 16))
+label(card2, "BALEREOT COMMUNITY", 12, UDim2.fromOffset(16, 12), UDim2.new(1, -32, 0, 16))
 local ab = label(card2, "Import file .rbxm / .rbxl dari folder workspace executor ke Workspace (lokal / client). RightShift untuk buka / tutup panel.", 9, UDim2.fromOffset(16, 32), UDim2.new(1, -150, 0, 46), C.muted, Enum.Font.Gotham)
 ab.TextWrapped = true; ab.TextYAlignment = Enum.TextYAlignment.Top
 local unload = gradButton(card2, "UNLOAD GUI", UDim2.new(1, -126, 1, -40), UDim2.fromOffset(110, 28))
@@ -518,8 +529,7 @@ local toggle = new("TextButton", {
 }, gui)
 corner(toggle, 23)
 gradient(toggle, C.a1, C.a2, 45)
-local ring = stroke(toggle, WHITE, 0.1, 2)
-spin(gradient3(ring, C.a1, WHITE, C.a2, 0), 5)
+local ring = stroke(toggle, WHITE, 0.55, 1)
 new("ImageLabel", {
     Size = UDim2.fromOffset(26, 26), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = WHITE, ZIndex = 21,
@@ -1299,7 +1309,7 @@ local importing = false
 local function addRow(info, order)
     local isPlace = info.kind == "PLACE"
     local col = isPlace and C.a2 or C.a1
-    local f = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, LayoutOrder = order}, listFrame)
+    local f = new("Frame", {BackgroundColor3 = WHITE, BackgroundTransparency = 0.25, BorderSizePixel = 0, LayoutOrder = order}, listFrame)
     corner(f, 14)
     local st = stroke(f, C.line, 0.35, 1)
     gradient(f, C.surface2, C.surface, 135)
