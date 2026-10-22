@@ -1,9 +1,9 @@
 --[[
-    ASSET IMPORTER (versi baru)
+    ASSET IMPORTER  |  Premium Edition
     - Scan file .rbxm / .rbxmx / .rbxl / .rbxlx dari folder workspace executor
-    - Filter ALL / MODEL / PLACE
-    - Tombol IMPORT per file -> masuk ke Folder baru di Workspace
-    Taruh file asset di folder: workspace/ImporterAssets (dibuat otomatis)
+    - Import ke Folder baru di Workspace + isi script terbaca (editor Studio Lite)
+    - Tombol bulat kecil untuk buka / tutup panel (bisa digeser)
+    Taruh file asset di: workspace/ImporterAssets (dibuat otomatis)
 ]]
 
 local Players = game:GetService("Players")
@@ -14,17 +14,32 @@ local lp = Players.LocalPlayer
 local ASSET_FOLDER = "ImporterAssets"
 local SCAN_FOLDERS = { ASSET_FOLDER, "" } -- "" = root workspace executor
 
-local C = {
-    bg = Color3.fromRGB(15, 12, 20),
-    side = Color3.fromRGB(18, 14, 25),
-    card = Color3.fromRGB(22, 16, 32),
-    accent = Color3.fromRGB(157, 78, 221),
-    accent2 = Color3.fromRGB(199, 125, 255),
-    text = Color3.fromRGB(245, 240, 255),
-    muted = Color3.fromRGB(150, 140, 175),
-    ok = Color3.fromRGB(80, 200, 120),
-    err = Color3.fromRGB(230, 70, 90),
+local ICON = {
+    PACKAGE = "rbxassetid://128864012857079",
+    FOLDER = "rbxassetid://88761476236687",
+    SETTINGS = "rbxassetid://11956055886",
+    DASHBOARD = "rbxassetid://90838150633173",
+    FILE = "rbxassetid://17109896197",
+    GAMEPAD = "rbxassetid://115836418226834",
+    REFRESH = "rbxassetid://13492317101",
+    CHECK = "rbxassetid://18349889388",
+    ALERT = "rbxassetid://7634887649",
 }
+
+local C = {
+    bg = Color3.fromRGB(10, 8, 15),
+    panel = Color3.fromRGB(16, 13, 24),
+    card = Color3.fromRGB(22, 18, 33),
+    card2 = Color3.fromRGB(34, 27, 52),
+    border = Color3.fromRGB(62, 48, 92),
+    accent = Color3.fromRGB(150, 80, 250),
+    accent2 = Color3.fromRGB(198, 134, 255),
+    text = Color3.fromRGB(246, 242, 255),
+    muted = Color3.fromRGB(140, 132, 168),
+    ok = Color3.fromRGB(72, 205, 128),
+    err = Color3.fromRGB(235, 80, 100),
+}
+local WHITE = Color3.new(1, 1, 1)
 
 -- ============ Helper UI ============
 local function new(class, props, parent)
@@ -34,7 +49,15 @@ local function new(class, props, parent)
     return o
 end
 local function corner(p, r) return new("UICorner", {CornerRadius = UDim.new(0, r or 8)}, p) end
-local function stroke(p, col, tr) return new("UIStroke", {Color = col or C.accent, Transparency = tr or 0.5, Thickness = 1.2}, p) end
+local function stroke(p, col, tr, th)
+    return new("UIStroke", {
+        Color = col or C.border, Transparency = tr or 0.5, Thickness = th or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, p)
+end
+local function gradient(p, c0, c1, rot)
+    return new("UIGradient", {Color = ColorSequence.new(c0, c1), Rotation = rot or 0}, p)
+end
 local function label(p, text, size, pos, sz, col, font)
     return new("TextLabel", {
         BackgroundTransparency = 1, Text = text, TextSize = size or 12,
@@ -42,6 +65,42 @@ local function label(p, text, size, pos, sz, col, font)
         TextXAlignment = Enum.TextXAlignment.Left,
         Position = pos or UDim2.new(), Size = sz or UDim2.new(1, 0, 0, 20),
     }, p)
+end
+local function tween(o, t, props)
+    TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+end
+local function primaryButton(parent, text, pos, size)
+    local b = new("TextButton", {
+        Position = pos, Size = size, BackgroundColor3 = WHITE, Text = text,
+        Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WHITE, AutoButtonColor = false,
+    }, parent)
+    corner(b, 10)
+    gradient(b, C.accent2, C.accent, 90)
+    return b
+end
+local function makeDraggable(handle, target, clickCb)
+    local dragging, moved, startPos, startUI
+    handle.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging, moved = true, false
+            startPos, startUI = i.Position, target.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - startPos
+            if d.Magnitude > 6 then moved = true end
+            if moved then
+                target.Position = UDim2.new(startUI.X.Scale, startUI.X.Offset + d.X, startUI.Y.Scale, startUI.Y.Offset + d.Y)
+            end
+        end
+    end)
+    UIS.InputEnded:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
+            dragging = false
+            if not moved and clickCb then clickCb() end
+        end
+    end)
 end
 
 local function getParent()
@@ -56,205 +115,303 @@ local old = getParent():FindFirstChild("AssetImporterUI")
 if old then old:Destroy() end
 
 local gui = new("ScreenGui", {
-    Name = "AssetImporterUI", ResetOnSpawn = false,
-    IgnoreGuiInset = true, DisplayOrder = 100,
+    Name = "AssetImporterUI", ResetOnSpawn = false, IgnoreGuiInset = true,
+    DisplayOrder = 100, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, getParent())
 
 -- ============ Notifikasi ============
 local function notify(title, msg, isErr)
-    local col = isErr and C.err or C.accent
+    local col = isErr and C.err or C.ok
     local f = new("Frame", {
-        Size = UDim2.fromOffset(260, 56), AnchorPoint = Vector2.new(1, 1),
-        Position = UDim2.new(1, 300, 1, -20), BackgroundColor3 = C.card,
+        Size = UDim2.fromOffset(280, 60), AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, 320, 1, -20), BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 50,
     }, gui)
-    corner(f, 12); stroke(f, col, 0.4)
-    label(f, title, 12, UDim2.fromOffset(14, 8), UDim2.new(1, -28, 0, 18))
-    local m = label(f, msg, 10, UDim2.fromOffset(14, 28), UDim2.new(1, -28, 0, 22), C.muted, Enum.Font.Gotham)
+    corner(f, 12); stroke(f, col, 0.35, 1.2)
+    local bar = new("Frame", {Size = UDim2.new(0, 3, 1, -20), Position = UDim2.fromOffset(8, 10), BackgroundColor3 = col, BorderSizePixel = 0}, f)
+    corner(bar, 2)
+    new("ImageLabel", {
+        Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(20, 21), BackgroundTransparency = 1,
+        Image = isErr and ICON.ALERT or ICON.CHECK, ImageColor3 = col,
+    }, f)
+    label(f, title, 12, UDim2.fromOffset(48, 9), UDim2.new(1, -58, 0, 18))
+    local m = label(f, msg, 10, UDim2.fromOffset(48, 28), UDim2.new(1, -58, 0, 26), C.muted, Enum.Font.Gotham)
     m.TextWrapped = true; m.TextYAlignment = Enum.TextYAlignment.Top
-    TweenService:Create(f, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Position = UDim2.new(1, -16, 1, -20)}):Play()
-    task.delay(3, function()
-        local t = TweenService:Create(f, TweenInfo.new(0.3), {Position = UDim2.new(1, 300, 1, -20)})
-        t:Play(); t.Completed:Wait(); f:Destroy()
+    tween(f, 0.4, {Position = UDim2.new(1, -16, 1, -20)})
+    task.delay(3.2, function()
+        tween(f, 0.3, {Position = UDim2.new(1, 320, 1, -20)})
+        task.wait(0.35)
+        f:Destroy()
     end)
 end
 
 -- ============ Window ============
 local main = new("Frame", {
     Size = UDim2.fromOffset(560, 380), AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = C.bg, ClipsDescendants = true,
+    Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = WHITE,
+    BorderSizePixel = 0, ClipsDescendants = true,
 }, gui)
-corner(main, 10); stroke(main, C.accent, 0.3)
+corner(main, 16)
+gradient(main, Color3.fromRGB(22, 16, 36), Color3.fromRGB(9, 7, 14), 135)
+local mainStroke = stroke(main, WHITE, 0.2, 1.5)
+gradient(mainStroke, C.accent2, Color3.fromRGB(80, 44, 160), 90)
 local scale = new("UIScale", {}, main)
+
+local baseScale = 1
 local function fit()
     local cam = workspace.CurrentCamera
     if cam then
         local v = cam.ViewportSize
-        scale.Scale = math.min(v.X / 600, v.Y / 420, 1)
+        baseScale = math.min(v.X / 600, v.Y / 420, 1)
+        if main.Visible then scale.Scale = baseScale end
     end
 end
 fit()
-
--- drag
-do
-    local dragging, startPos, startUI
-    main.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging, startPos, startUI = true, i.Position, main.Position
-        end
-    end)
-    UIS.InputChanged:Connect(function(i)
-        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - startPos
-            main.Position = UDim2.new(startUI.X.Scale, startUI.X.Offset + d.X, startUI.Y.Scale, startUI.Y.Offset + d.Y)
-        end
-    end)
-    UIS.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
+scale.Scale = baseScale
+if workspace.CurrentCamera then
+    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
 end
 
--- sidebar
-local side = new("Frame", {Size = UDim2.new(0, 170, 1, 0), BackgroundColor3 = C.side}, main)
-corner(side, 10)
-label(side, "ASSET IMPORTER", 13, UDim2.fromOffset(14, 14), UDim2.new(1, -28, 0, 18))
-label(side, "v1.0", 10, UDim2.fromOffset(14, 33), UDim2.new(1, -28, 0, 14), C.muted, Enum.Font.GothamMedium)
+local isOpen = true
+local function openMain()
+    isOpen = true
+    main.Visible = true
+    scale.Scale = baseScale * 0.9
+    tween(scale, 0.25, {Scale = baseScale})
+end
+local function closeMain()
+    isOpen = false
+    tween(scale, 0.18, {Scale = baseScale * 0.9})
+    task.delay(0.19, function() if not isOpen then main.Visible = false end end)
+end
+
+-- ---- Sidebar ----
+local side = new("Frame", {Size = UDim2.new(0, 160, 1, 0), BackgroundColor3 = WHITE, BorderSizePixel = 0}, main)
+gradient(side, Color3.fromRGB(26, 19, 42), Color3.fromRGB(12, 9, 19), 90)
+new("Frame", {
+    Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0),
+    BackgroundColor3 = C.border, BackgroundTransparency = 0.4, BorderSizePixel = 0,
+}, side)
+
+local logo = new("Frame", {Size = UDim2.fromOffset(38, 38), Position = UDim2.fromOffset(14, 16), BackgroundColor3 = WHITE, BorderSizePixel = 0}, side)
+corner(logo, 11)
+gradient(logo, C.accent2, Color3.fromRGB(100, 50, 190), 45)
+new("ImageLabel", {
+    Size = UDim2.fromOffset(22, 22), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = WHITE,
+}, logo)
+label(side, "ASSET IMPORTER", 12, UDim2.fromOffset(62, 17), UDim2.new(1, -66, 0, 16))
+label(side, "PREMIUM EDITION", 8, UDim2.fromOffset(62, 35), UDim2.new(1, -66, 0, 12), C.accent2)
+
+-- ---- Header ----
+local header = new("Frame", {Size = UDim2.new(1, -160, 0, 56), Position = UDim2.fromOffset(160, 0), BackgroundTransparency = 1}, main)
+local titleLbl = label(header, "", 17, UDim2.fromOffset(20, 10), UDim2.new(1, -70, 0, 22))
+local subLbl = label(header, "", 10, UDim2.fromOffset(20, 33), UDim2.new(1, -70, 0, 14), C.muted, Enum.Font.Gotham)
+new("Frame", {
+    Size = UDim2.new(1, -40, 0, 1), Position = UDim2.new(0, 20, 1, -1),
+    BackgroundColor3 = C.border, BackgroundTransparency = 0.55, BorderSizePixel = 0,
+}, header)
+
+local closeBtn = new("TextButton", {
+    Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -42, 0, 14), BackgroundColor3 = C.card2,
+    Text = "X", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, AutoButtonColor = false, ZIndex = 5,
+}, header)
+corner(closeBtn, 14); stroke(closeBtn, C.border, 0.4)
+closeBtn.MouseEnter:Connect(function() tween(closeBtn, 0.15, {BackgroundColor3 = C.err}) end)
+closeBtn.MouseLeave:Connect(function() tween(closeBtn, 0.15, {BackgroundColor3 = C.card2}) end)
+closeBtn.MouseButton1Click:Connect(closeMain)
+
+makeDraggable(header, main)
+makeDraggable(side, main)
 
 local content = new("Frame", {
-    Size = UDim2.new(1, -170, 1, 0), Position = UDim2.fromOffset(170, 0),
+    Size = UDim2.new(1, -160, 1, -56), Position = UDim2.fromOffset(160, 56),
     BackgroundTransparency = 1, ClipsDescendants = true,
 }, main)
 
-local closeBtn = new("TextButton", {
-    Size = UDim2.fromOffset(26, 26), Position = UDim2.new(1, -38, 0, 12),
-    BackgroundColor3 = Color3.fromRGB(32, 24, 46), Text = "X", Font = Enum.Font.GothamBold,
-    TextSize = 13, TextColor3 = C.text, ZIndex = 5,
-}, main)
-corner(closeBtn, 8)
-closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
-
--- ============ Views ============
-local views, navButtons = {}, {}
+-- ============ Views & Nav ============
+local views, navs = {}, {}
+local viewInfo = {
+    Overview = {"Overview", "Ringkasan akun dan statistik asset"},
+    Assets = {"Assets", "Pilih file lalu tekan IMPORT"},
+    Scripts = {"Script Viewer", "Isi script dari file yang di-import"},
+    Settings = {"Settings", "Tentang dan pengaturan"},
+}
 
 local function makeView(name)
     local v = new("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false}, content)
+    new("UIPadding", {PaddingLeft = UDim.new(0, 20), PaddingRight = UDim.new(0, 20), PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14)}, v)
     views[name] = v
     return v
 end
 
 local function showView(name)
     for n, v in pairs(views) do v.Visible = (n == name) end
-    for n, b in pairs(navButtons) do
-        b.BackgroundTransparency = (n == name) and 0 or 1
-        b.TextColor3 = (n == name) and C.text or C.muted
+    for n, nv in pairs(navs) do
+        local on = (n == name)
+        tween(nv.btn, 0.2, {BackgroundTransparency = on and 0.05 or 1})
+        tween(nv.bar, 0.2, {Size = UDim2.fromOffset(3, on and 18 or 0)})
+        tween(nv.icon, 0.2, {ImageColor3 = on and C.accent2 or C.muted})
+        tween(nv.label, 0.2, {TextColor3 = on and C.text or C.muted})
     end
+    titleLbl.Text = viewInfo[name][1]
+    subLbl.Text = viewInfo[name][2]
 end
 
-local function navButton(name, order)
+local function navButton(name, icon, order)
     local b = new("TextButton", {
-        Size = UDim2.new(1, -28, 0, 34), Position = UDim2.fromOffset(14, 70 + (order - 1) * 40),
-        BackgroundColor3 = Color3.fromRGB(38, 28, 55), BackgroundTransparency = 1,
-        Text = name, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = C.muted,
+        Size = UDim2.new(1, -24, 0, 38), Position = UDim2.fromOffset(12, 74 + (order - 1) * 44),
+        BackgroundColor3 = C.card2, BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
     }, side)
-    corner(b, 8)
+    corner(b, 10)
+    local bar = new("Frame", {
+        Size = UDim2.fromOffset(3, 0), Position = UDim2.new(0, 0, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundColor3 = C.accent2, BorderSizePixel = 0,
+    }, b)
+    corner(bar, 2)
+    local ic = new("ImageLabel", {
+        Size = UDim2.fromOffset(16, 16), Position = UDim2.new(0, 14, 0.5, -8),
+        BackgroundTransparency = 1, Image = icon, ImageColor3 = C.muted,
+    }, b)
+    local lb = label(b, name, 12, UDim2.fromOffset(40, 0), UDim2.new(1, -44, 1, 0), C.muted, Enum.Font.GothamMedium)
+    navs[name] = {btn = b, bar = bar, icon = ic, label = lb}
     b.MouseButton1Click:Connect(function() showView(name) end)
-    navButtons[name] = b
 end
+navButton("Overview", ICON.DASHBOARD, 1)
+navButton("Assets", ICON.FOLDER, 2)
+navButton("Scripts", ICON.FILE, 3)
+navButton("Settings", ICON.SETTINGS, 4)
 
-navButton("Overview", 1)
-navButton("Assets", 2)
-navButton("Scripts", 3)
-navButton("Settings", 4)
+-- footer sidebar
+local execName = "Executor"
+pcall(function()
+    if identifyexecutor then execName = tostring((identifyexecutor())) end
+end)
+local foot = new("Frame", {Size = UDim2.new(1, -24, 0, 36), Position = UDim2.new(0, 12, 1, -48), BackgroundColor3 = C.card, BorderSizePixel = 0}, side)
+corner(foot, 10); stroke(foot, C.border, 0.5)
+local dot = new("Frame", {Size = UDim2.fromOffset(8, 8), Position = UDim2.new(0, 12, 0.5, -4), BackgroundColor3 = C.ok, BorderSizePixel = 0}, foot)
+corner(dot, 4)
+local fl = label(foot, "Ready  |  " .. execName, 10, UDim2.fromOffset(28, 0), UDim2.new(1, -34, 1, 0), C.muted, Enum.Font.GothamMedium)
+fl.TextTruncate = Enum.TextTruncate.AtEnd
 
 -- ---- Overview ----
 local ov = makeView("Overview")
-label(ov, "System Profile", 17, UDim2.fromOffset(20, 20), UDim2.new(1, -40, 0, 24))
-local prof = new("Frame", {Size = UDim2.new(1, -40, 0, 80), Position = UDim2.fromOffset(20, 54), BackgroundColor3 = C.card}, ov)
-corner(prof, 12); stroke(prof)
-label(prof, lp.DisplayName, 15, UDim2.fromOffset(16, 16), UDim2.new(1, -32, 0, 20))
-label(prof, "@" .. lp.Name .. "  |  ID: " .. lp.UserId, 11, UDim2.fromOffset(16, 40), UDim2.new(1, -32, 0, 16), C.muted, Enum.Font.Gotham)
+local prof = new("Frame", {Size = UDim2.new(1, 0, 0, 88), BackgroundColor3 = WHITE, BorderSizePixel = 0}, ov)
+corner(prof, 14)
+gradient(prof, Color3.fromRGB(46, 30, 74), Color3.fromRGB(20, 15, 32), 45)
+stroke(prof, C.accent, 0.5, 1.2)
+local avatarWrap = new("Frame", {Size = UDim2.fromOffset(58, 58), Position = UDim2.fromOffset(16, 15), BackgroundColor3 = C.card, BorderSizePixel = 0}, prof)
+corner(avatarWrap, 29); stroke(avatarWrap, C.accent2, 0.1, 2)
+local avatar = new("ImageLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"}, avatarWrap)
+corner(avatar, 29)
+task.spawn(function()
+    local ok, img = pcall(function()
+        return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
+    end)
+    if ok and img then avatar.Image = img end
+end)
+local nm = label(prof, lp.DisplayName, 15, UDim2.fromOffset(86, 16), UDim2.new(1, -100, 0, 20))
+nm.TextTruncate = Enum.TextTruncate.AtEnd
+local un = label(prof, "@" .. lp.Name .. "   |   ID " .. lp.UserId, 10, UDim2.fromOffset(86, 38), UDim2.new(1, -100, 0, 14), C.muted, Enum.Font.Gotham)
+un.TextTruncate = Enum.TextTruncate.AtEnd
+local pill = new("Frame", {Size = UDim2.fromOffset(74, 16), Position = UDim2.fromOffset(86, 58), BackgroundColor3 = WHITE, BorderSizePixel = 0}, prof)
+corner(pill, 8)
+gradient(pill, C.accent2, C.accent, 0)
+new("TextLabel", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "PREMIUM", Font = Enum.Font.GothamBold,
+    TextSize = 9, TextColor3 = Color3.fromRGB(20, 10, 36),
+}, pill)
 
-local statTotal = new("Frame", {Size = UDim2.new(0.5, -26, 0, 60), Position = UDim2.fromOffset(20, 148), BackgroundColor3 = C.card}, ov)
-corner(statTotal, 10); stroke(statTotal)
-label(statTotal, "TOTAL ASSETS", 10, UDim2.fromOffset(12, 8), UDim2.new(1, -24, 0, 14), C.muted)
-local lblTotal = label(statTotal, "0", 20, UDim2.fromOffset(12, 26), UDim2.new(1, -24, 0, 26))
+local function statCard(idx, title)
+    local f = new("Frame", {
+        Size = UDim2.new(1 / 3, -8, 0, 66), Position = UDim2.new((idx - 1) / 3, (idx - 1) * 4, 0, 100),
+        BackgroundColor3 = WHITE, BorderSizePixel = 0,
+    }, ov)
+    corner(f, 12); stroke(f, C.border, 0.45)
+    gradient(f, C.card2, C.card, 135)
+    label(f, title, 9, UDim2.fromOffset(12, 10), UDim2.new(1, -24, 0, 12), C.muted)
+    return label(f, "0", 22, UDim2.fromOffset(12, 28), UDim2.new(1, -24, 0, 28))
+end
+local statAssets = statCard(1, "TOTAL ASSETS")
+local statImported = statCard(2, "DI-IMPORT")
+local statScripts = statCard(3, "SCRIPT TERBACA")
+
+local tip = new("Frame", {Size = UDim2.new(1, 0, 0, 58), Position = UDim2.fromOffset(0, 178), BackgroundColor3 = C.card, BorderSizePixel = 0}, ov)
+corner(tip, 12); stroke(tip, C.border, 0.5)
+new("ImageLabel", {Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(14, 20), BackgroundTransparency = 1, Image = ICON.FOLDER, ImageColor3 = C.accent2}, tip)
+local tl = label(tip, "Letakkan file .rbxm / .rbxl di folder workspace/" .. ASSET_FOLDER .. " lalu buka tab Assets.", 10, UDim2.fromOffset(44, 8), UDim2.new(1, -56, 0, 42), C.muted, Enum.Font.Gotham)
+tl.TextWrapped = true
+
+local importedTotal, scriptTotal = 0, 0
 
 -- ---- Assets ----
 local av = makeView("Assets")
-label(av, "Dashboard", 17, UDim2.fromOffset(20, 20), UDim2.new(1, -60, 0, 22))
-label(av, "Taruh file di workspace/" .. ASSET_FOLDER, 11, UDim2.fromOffset(20, 44), UDim2.new(1, -40, 0, 14), C.muted, Enum.Font.Gotham)
-
-local filter = "ALL"
-local rows = {}
-
+local rows, filterKind, searchText = {}, "ALL", ""
 local function applyFilter()
     for _, r in ipairs(rows) do
-        r.frame.Visible = (filter == "ALL") or (r.kind == filter)
+        local okKind = (filterKind == "ALL") or (r.kind == filterKind)
+        local okSearch = (searchText == "") or (r.name:lower():find(searchText, 1, true) ~= nil)
+        r.frame.Visible = okKind and okSearch
     end
 end
 
-local filterBtns = {}
-for i, name in ipairs({"ALL", "MODEL", "PLACE"}) do
+local seg = new("Frame", {Size = UDim2.fromOffset(190, 30), BackgroundColor3 = C.card, BorderSizePixel = 0}, av)
+corner(seg, 15); stroke(seg, C.border, 0.5)
+local segBtns = {}
+for i, nmk in ipairs({"ALL", "MODEL", "PLACE"}) do
     local b = new("TextButton", {
-        Size = UDim2.fromOffset(70, 26), Position = UDim2.fromOffset(20 + (i - 1) * 76, 68),
-        BackgroundColor3 = (i == 1) and C.accent or C.card, Text = name,
-        Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.text,
-    }, av)
+        Size = UDim2.fromOffset(60, 26), Position = UDim2.fromOffset(2 + (i - 1) * 62, 2),
+        BackgroundColor3 = C.accent, BackgroundTransparency = (i == 1) and 0 or 1,
+        Text = nmk, Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = C.text, AutoButtonColor = false,
+    }, seg)
     corner(b, 13)
-    filterBtns[name] = b
+    segBtns[nmk] = b
     b.MouseButton1Click:Connect(function()
-        filter = name
-        for n, fb in pairs(filterBtns) do fb.BackgroundColor3 = (n == name) and C.accent or C.card end
+        filterKind = nmk
+        for n2, fb in pairs(segBtns) do tween(fb, 0.2, {BackgroundTransparency = (n2 == nmk) and 0 or 1}) end
         applyFilter()
     end)
 end
 
-local rescan = new("TextButton", {
-    Size = UDim2.fromOffset(100, 26), Position = UDim2.new(1, -120, 0, 68),
-    BackgroundColor3 = C.card, Text = "Rescan", Font = Enum.Font.GothamBold,
-    TextSize = 11, TextColor3 = C.text,
+local rescan = primaryButton(av, "Rescan", UDim2.new(1, -96, 0, 0), UDim2.fromOffset(96, 30))
+local searchBox = new("TextBox", {
+    Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 38), BackgroundColor3 = C.card,
+    Text = "", PlaceholderText = "Cari asset...", PlaceholderColor3 = C.muted, TextColor3 = C.text,
+    Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
 }, av)
-corner(rescan, 13); stroke(rescan)
+corner(searchBox, 10); stroke(searchBox, C.border, 0.5)
+new("UIPadding", {PaddingLeft = UDim.new(0, 12)}, searchBox)
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    searchText = searchBox.Text:lower()
+    applyFilter()
+end)
 
-local scroll = new("ScrollingFrame", {
-    Size = UDim2.new(1, -40, 1, -110), Position = UDim2.fromOffset(20, 104),
-    BackgroundTransparency = 1, ScrollBarThickness = 2, ScrollBarImageColor3 = C.accent,
+local listFrame = new("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 1, -76), Position = UDim2.fromOffset(0, 76), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.accent,
     AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
 }, av)
-new("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, scroll)
+new("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, listFrame)
 
--- ---- Settings ----
-local sv = makeView("Settings")
-label(sv, "About", 17, UDim2.fromOffset(20, 20), UDim2.new(1, -40, 0, 24))
-local about = label(sv, "Asset Importer: scan dan import file .rbxm/.rbxl dari folder workspace executor ke Workspace game (lokal/client).", 11, UDim2.fromOffset(20, 54), UDim2.new(1, -40, 0, 60), C.muted, Enum.Font.Gotham)
-about.TextWrapped = true; about.TextYAlignment = Enum.TextYAlignment.Top
-
--- ---- Scripts (viewer) ----
+-- ---- Scripts ----
 local scv = makeView("Scripts")
-label(scv, "Script Viewer", 17, UDim2.fromOffset(20, 20), UDim2.new(1, -60, 0, 22))
 local scList = new("ScrollingFrame", {
-    Size = UDim2.new(1, -40, 0, 110), Position = UDim2.fromOffset(20, 50),
-    BackgroundColor3 = C.card, ScrollBarThickness = 2, ScrollBarImageColor3 = C.accent,
+    Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card, BorderSizePixel = 0,
+    ScrollBarThickness = 3, ScrollBarImageColor3 = C.accent,
     AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
 }, scv)
-corner(scList, 8)
+corner(scList, 10); stroke(scList, C.border, 0.5)
+new("UIPadding", {PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6)}, scList)
 new("UIListLayout", {Padding = UDim.new(0, 4)}, scList)
+
 local codeBox = new("TextBox", {
-    Size = UDim2.new(1, -40, 1, -210), Position = UDim2.fromOffset(20, 168),
-    BackgroundColor3 = C.card, Text = "Import file dulu, lalu pilih script di atas.",
-    TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 11,
+    Size = UDim2.new(1, 0, 1, -138), Position = UDim2.fromOffset(0, 100), BackgroundColor3 = Color3.fromRGB(13, 10, 20),
+    Text = "Import file dulu, lalu pilih script di atas.", TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 11,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-    ClearTextOnFocus = false, TextEditable = false, MultiLine = true,
-    TextWrapped = false, ClipsDescendants = true,
+    ClearTextOnFocus = false, TextEditable = false, MultiLine = true, TextWrapped = false, ClipsDescendants = true,
 }, scv)
-corner(codeBox, 8)
-local copyBtn = new("TextButton", {
-    Size = UDim2.fromOffset(100, 26), Position = UDim2.new(0, 20, 1, -34),
-    BackgroundColor3 = C.accent, Text = "COPY", Font = Enum.Font.GothamBold,
-    TextSize = 11, TextColor3 = Color3.new(1, 1, 1),
-}, scv)
-corner(copyBtn, 8)
+corner(codeBox, 10); stroke(codeBox, C.border, 0.5)
+new("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6)}, codeBox)
+local copyBtn = primaryButton(scv, "COPY", UDim2.new(0, 0, 1, -30), UDim2.fromOffset(100, 30))
 
 local currentSrc = ""
 local function showSource(src)
@@ -275,43 +432,51 @@ copyBtn.MouseButton1Click:Connect(function()
 end)
 
 local function registerScript(path, class, src)
+    scriptTotal += 1
+    statScripts.Text = tostring(scriptTotal)
     local b = new("TextButton", {
-        Size = UDim2.new(1, -8, 0, 22), BackgroundColor3 = Color3.fromRGB(32, 24, 46),
-        Text = " [" .. class .. "] " .. path, Font = Enum.Font.GothamMedium, TextSize = 10,
-        TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
-        TextTruncate = Enum.TextTruncate.AtEnd,
+        Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = C.card2, Text = "  [" .. class .. "]  " .. path,
+        Font = Enum.Font.GothamMedium, TextSize = 10, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false,
     }, scList)
-    corner(b, 6)
+    corner(b, 8)
     b.MouseButton1Click:Connect(function() showSource(src) end)
 end
 
--- ============ Logic ============
-local function kindOf(name)
-    local l = name:lower()
-    if l:match("%.rbxmx?$") then return "MODEL" end
-    if l:match("%.rbxlx?$") then return "PLACE" end
-end
+-- ---- Settings ----
+local sv = makeView("Settings")
+local about = new("Frame", {Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = WHITE, BorderSizePixel = 0}, sv)
+corner(about, 14)
+gradient(about, Color3.fromRGB(40, 27, 64), Color3.fromRGB(19, 14, 30), 45)
+stroke(about, C.accent, 0.55, 1.2)
+label(about, "Asset Importer  -  Premium Edition", 14, UDim2.fromOffset(16, 14), UDim2.new(1, -32, 0, 20))
+local ab = label(about, "Scan dan import file .rbxm / .rbxl dari folder workspace executor ke Workspace game (lokal / client).", 10, UDim2.fromOffset(16, 38), UDim2.new(1, -32, 0, 44), C.muted, Enum.Font.Gotham)
+ab.TextWrapped = true; ab.TextYAlignment = Enum.TextYAlignment.Top
+local unload = primaryButton(sv, "Unload GUI", UDim2.fromOffset(0, 108), UDim2.fromOffset(120, 32))
+unload.MouseButton1Click:Connect(function() gui:Destroy() end)
 
-local function fileName(path) return path:match("([^/\\]+)$") or path end
-
-local function scanFiles()
-    local found, seen = {}, {}
-    if not listfiles then return found end
-    for _, folder in ipairs(SCAN_FOLDERS) do
-        local ok, list = pcall(listfiles, folder)
-        if ok and type(list) == "table" then
-            for _, path in ipairs(list) do
-                local kind = kindOf(path)
-                if kind and not seen[path] then
-                    seen[path] = true
-                    table.insert(found, {name = fileName(path), path = path, kind = kind})
-                end
-            end
-        end
+-- ============ Tombol kecil buka / tutup panel ============
+local toggle = new("ImageButton", {
+    Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 14, 0, 120), BackgroundColor3 = WHITE,
+    AutoButtonColor = false, Image = "", ZIndex = 20,
+}, gui)
+corner(toggle, 23)
+gradient(toggle, C.accent2, Color3.fromRGB(95, 48, 185), 45)
+stroke(toggle, WHITE, 0.55, 1.5)
+new("ImageLabel", {
+    Size = UDim2.fromOffset(24, 24), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Image = ICON.PACKAGE, ImageColor3 = WHITE, ZIndex = 21,
+}, toggle)
+makeDraggable(toggle, toggle, function()
+    if isOpen then closeMain() else openMain() end
+end)
+UIS.InputBegan:Connect(function(i, gp)
+    if not gp and i.KeyCode == Enum.KeyCode.RightShift then
+        if isOpen then closeMain() else openMain() end
     end
-    return found
-end
+end)
 
+-- ============ Logic ============
 -- ---------- Parser file rbxm/rbxmx (untuk baca isi script) ----------
 local SCRIPT_CLASSES = {Script = true, LocalScript = true, ModuleScript = true}
 
@@ -385,6 +550,7 @@ local function parseBinary(data)
     if data:sub(1, 8) ~= "<roblox!" then return nil end
     local pos = 33
     local classes, insts, order = {}, {}, {}
+    local chunks = 0
     while pos <= #data do
         local name = data:sub(pos, pos + 3)
         local comp, unc = string.unpack("<I4I4", data, pos + 4)
@@ -396,6 +562,8 @@ local function parseBinary(data)
             raw = data:sub(pos, pos + comp - 1); pos += comp
         end
         if name == "END\0" then break end
+        chunks += 1
+        if chunks % 25 == 0 then task.wait() end
         if name == "INST" or name == "PROP" or name == "PRNT" then
             local chunk = decompressChunk(comp, raw)
             if name == "INST" then
@@ -592,9 +760,14 @@ local function attachSources(objs, folder, parsed)
             end
         end
     end
+    local visited = 0
     for _, obj in ipairs(objs) do
         handle(obj)
-        for _, d in ipairs(obj:GetDescendants()) do handle(d) end
+        for _, d in ipairs(obj:GetDescendants()) do
+            handle(d)
+            visited += 1
+            if visited % 150 == 0 then task.wait() end
+        end
     end
     return n
 end
@@ -614,9 +787,28 @@ local function importFile(info)
     while workspace:FindFirstChild(name) do n += 1; name = base .. "_" .. n end
     local folder = new("Folder", {Name = name}, workspace)
     local count = 0
-    for _, obj in ipairs(objs) do
+    local function adopt(obj)
         local okp = pcall(function() obj.Parent = folder end)
-        if okp then count += 1 end
+        if okp and obj.Parent == folder then count += 1 return end
+        -- service / DataModel (hasil .rbxl): pindahkan isinya ke subfolder
+        local sub = Instance.new("Folder")
+        sub.Name = obj.Name
+        local moved = 0
+        for _, ch in ipairs(obj:GetChildren()) do
+            if pcall(function() ch.Parent = sub end) and ch.Parent == sub then moved += 1 end
+        end
+        if moved > 0 then sub.Parent = folder; count += moved else sub:Destroy() end
+    end
+    for _, obj in ipairs(objs) do
+        if obj:IsA("DataModel") then
+            for _, svc in ipairs(obj:GetChildren()) do adopt(svc) end
+        else
+            adopt(obj)
+        end
+    end
+    if count == 0 then
+        folder:Destroy()
+        return false, "File terbaca tapi isinya kosong (executor tidak mengembalikan isi file)"
     end
 
     -- baca isi script langsung dari file
@@ -628,7 +820,7 @@ local function importFile(info)
             if data:find("<roblox", 1, true) then return parseXml(data) end
         end)
         if okP and type(parsed) == "table" then
-            scriptCount = attachSources(objs, folder, parsed)
+            scriptCount = attachSources({folder}, folder, parsed)
         elseif not okP then
             scriptErr = tostring(parsed)
         end
@@ -638,40 +830,70 @@ local function importFile(info)
     return true, msg
 end
 
+local function kindOf(name)
+    local l = name:lower()
+    if l:match("%.rbxmx?$") then return "MODEL" end
+    if l:match("%.rbxlx?$") then return "PLACE" end
+end
+
+local function fileName(path) return path:match("([^/\\]+)$") or path end
+
+local function scanFiles()
+    local found, seen = {}, {}
+    if not listfiles then return found end
+    for _, folder in ipairs(SCAN_FOLDERS) do
+        local ok, list = pcall(listfiles, folder)
+        if ok and type(list) == "table" then
+            for _, path in ipairs(list) do
+                local kind = kindOf(path)
+                if kind and not seen[path] then
+                    seen[path] = true
+                    table.insert(found, {name = fileName(path), path = path, kind = kind})
+                end
+            end
+        end
+    end
+    return found
+end
+
 local function addRow(info)
-    local col = (info.kind == "PLACE") and C.accent2 or C.ok
-    local f = new("Frame", {Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card}, scroll)
-    corner(f, 10); stroke(f, Color3.fromRGB(50, 40, 70))
-    local n = label(f, info.name, 12, UDim2.fromOffset(14, 8), UDim2.new(1, -110, 0, 18))
+    local isPlace = info.kind == "PLACE"
+    local col = isPlace and C.accent2 or C.ok
+    local f = new("Frame", {Size = UDim2.new(1, -4, 0, 62), BackgroundColor3 = WHITE, BorderSizePixel = 0}, listFrame)
+    corner(f, 12); stroke(f, C.border, 0.5)
+    gradient(f, C.card2, C.card, 135)
+    local tile = new("Frame", {Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(12, 11), BackgroundColor3 = col, BackgroundTransparency = 0.82, BorderSizePixel = 0}, f)
+    corner(tile, 11)
+    new("ImageLabel", {
+        Size = UDim2.fromOffset(20, 20), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundTransparency = 1, Image = isPlace and ICON.GAMEPAD or ICON.FILE, ImageColor3 = col,
+    }, tile)
+    local n = label(f, info.name, 12, UDim2.fromOffset(62, 9), UDim2.new(1, -156, 0, 18))
     n.TextTruncate = Enum.TextTruncate.AtEnd
-    local p = label(f, info.path, 10, UDim2.fromOffset(14, 26), UDim2.new(1, -110, 0, 14), C.muted, Enum.Font.Gotham)
+    local p = label(f, info.path, 9, UDim2.fromOffset(62, 27), UDim2.new(1, -156, 0, 14), C.muted, Enum.Font.Gotham)
     p.TextTruncate = Enum.TextTruncate.AtEnd
     local tag = new("TextLabel", {
-        Size = UDim2.fromOffset(45, 14), Position = UDim2.fromOffset(14, 40),
-        BackgroundColor3 = col, Text = info.kind, Font = Enum.Font.GothamBold,
-        TextSize = 9, TextColor3 = Color3.fromRGB(20, 15, 30),
+        Size = UDim2.fromOffset(46, 13), Position = UDim2.fromOffset(62, 44), BackgroundColor3 = col,
+        Text = info.kind, Font = Enum.Font.GothamBold, TextSize = 8, TextColor3 = Color3.fromRGB(20, 15, 30),
     }, f)
-    corner(tag, 4)
-    local btn = new("TextButton", {
-        Size = UDim2.fromOffset(70, 28), Position = UDim2.new(1, -82, 0.5, -14),
-        BackgroundColor3 = C.accent, Text = "IMPORT", Font = Enum.Font.GothamBold,
-        TextSize = 11, TextColor3 = Color3.new(1, 1, 1),
-    }, f)
-    corner(btn, 8)
+    corner(tag, 6)
+    local btn = primaryButton(f, "IMPORT", UDim2.new(1, -88, 0.5, -15), UDim2.fromOffset(76, 30))
     btn.MouseButton1Click:Connect(function()
         if btn.Text ~= "IMPORT" then return end
         btn.Text = "LOADING"
         task.spawn(function()
             local ok, msg = importFile(info)
             btn.Text = ok and "DONE" or "FAIL"
-            btn.BackgroundColor3 = ok and C.ok or C.err
+            if ok then
+                importedTotal += 1
+                statImported.Text = tostring(importedTotal)
+            end
             notify(ok and "Success" or "Failed", msg, not ok)
             task.wait(2)
-            btn.Text = "IMPORT"
-            btn.BackgroundColor3 = C.accent
+            if btn.Parent then btn.Text = "IMPORT" end
         end)
     end)
-    table.insert(rows, {frame = f, kind = info.kind})
+    table.insert(rows, {frame = f, kind = info.kind, name = info.name})
 end
 
 local scanning = false
@@ -684,7 +906,7 @@ local function refresh()
     if makefolder and isfolder and not isfolder(ASSET_FOLDER) then pcall(makefolder, ASSET_FOLDER) end
     local files = scanFiles()
     for _, info in ipairs(files) do addRow(info) end
-    lblTotal.Text = tostring(#files)
+    statAssets.Text = tostring(#files)
     applyFilter()
     rescan.Text = "Rescan"
     if #files > 0 then
@@ -694,8 +916,8 @@ local function refresh()
     end
     scanning = false
 end
-
 rescan.MouseButton1Click:Connect(refresh)
 
 showView("Overview")
+openMain()
 task.defer(refresh)
