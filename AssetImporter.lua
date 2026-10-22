@@ -16,6 +16,19 @@ local lp = Players.LocalPlayer
 local ASSET_FOLDER = "ImporterAssets"
 local SCAN_FOLDERS = { ASSET_FOLDER, "" }
 
+-- ============ KEY USERNAME (WHITELIST) ============
+-- Tulis username Roblox (bukan display name) yang boleh memakai script ini.
+-- Bisa juga angka UserId. Tidak peka huruf besar / kecil.
+local ALLOWED_USERS = {
+    "gahheyhdgdg",
+    "usernameteman1",
+    "usernameteman2",
+    -- 123456789, -- contoh pakai UserId
+}
+-- Opsional: daftar online supaya tidak perlu bagi ulang script tiap tambah user.
+-- Isi dengan link teks mentah (satu username per baris, baris diawali # = komentar).
+local WHITELIST_URL = ""
+
 local ICON = {
     PACKAGE = "rbxassetid://128864012857079",
     FOLDER = "rbxassetid://88761476236687",
@@ -186,6 +199,37 @@ local function notify(title, msg, isErr)
         f:Destroy()
     end)
 end
+
+-- ============ Cek akses ============
+local function isAllowed()
+    local names, ids = {}, {}
+    local function add(v)
+        if type(v) == "number" then
+            ids[v] = true
+        elseif type(v) == "string" then
+            v = v:match("^%s*(.-)%s*$")
+            if v ~= "" and v:sub(1, 1) ~= "#" then
+                local num = tonumber(v)
+                if num then ids[num] = true else names[v:lower()] = true end
+            end
+        end
+    end
+    for _, v in ipairs(ALLOWED_USERS) do add(v) end
+    if WHITELIST_URL ~= "" then
+        local ok, body = pcall(function() return game:HttpGet(WHITELIST_URL) end)
+        if ok and type(body) == "string" then
+            for line in body:gmatch("[^\r\n]+") do add(line) end
+        end
+    end
+    return names[lp.Name:lower()] == true or ids[lp.UserId] == true
+end
+
+if not isAllowed() then
+    notify("Akses ditolak", "@" .. lp.Name .. " belum terdaftar. Minta owner menambahkan username kamu.", true)
+    task.delay(6, function() gui:Destroy() end)
+    return
+end
+notify("Akses diterima", "Selamat datang, @" .. lp.Name, false)
 
 -- ============ Window ============
 local W, H = 540, 340
